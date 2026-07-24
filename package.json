@@ -1,0 +1,28 @@
+{
+  "name": "claude-analytics",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Query the Claude Code Analytics API from a CLI and a self-hosted React app, joined to a developer attributes CSV.",
+  "workspaces": [
+    "packages/*",
+    "apps/cli",
+    "apps/server",
+    "apps/web"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build:core": "npm run build -w @claude-analytics/core",
+    "build:web": "npm run build -w @claude-analytics/web",
+    "build": "npm run build:core && npm run build:web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "cli": "node --import tsx apps/cli/src/index.ts",
+    "dev": "npm run build:core && concurrently -n server,web -c blue,green \"node --import tsx --watch apps/server/src/index.ts\" \"npm run dev -w @claude-analytics/web\"",
+    "start": "npm run build && node --import tsx apps/server/src/index.ts"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "typescript": "^5.6.3"
+  }
+}
