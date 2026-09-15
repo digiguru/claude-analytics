@@ -27,7 +27,7 @@ import { SortableTable, type Column } from "./SortableTable.js";
 import { VariableWidthBars } from "./VariableWidthBars.js";
 
 /** Chart/table ordering: by metric magnitude ("size", default) or by group name ("alpha"). */
-type SortOrder = "size" | "alpha";
+type SortOrder = "size" | "alpha" | "date";
 
 interface Props {
   from: string;
@@ -47,20 +47,6 @@ const METRICS: Metric[] = [
   { key: "ccSessions", label: "Claude Code sessions" },
   { key: "chatMessages", label: "Chat messages" },
   { key: "activeUserDays", label: "Active user-days" },
-];
-
-const columns: Column<GroupRow>[] = [
-  { key: "key", label: "Group", value: (r) => r.key },
-  { key: "developers", label: "Devs", numeric: true, value: (r) => r.developers },
-  { key: "activeUserDays", label: "Active days", numeric: true, value: (r) => r.activeUserDays, render: (r) => r.activeUserDays.toFixed(1) },
-  { key: "costCents", label: "Cost", numeric: true, value: (r) => r.costCents, render: (r) => usd(r.costCents) },
-  { key: "avgCostPerDeveloper", label: "$/dev", numeric: true, value: (r) => r.avgCostPerDeveloper, render: (r) => usd(r.avgCostPerDeveloper) },
-  { key: "totalTokens", label: "Tokens", numeric: true, value: (r) => r.totalTokens, render: (r) => tokens(r.totalTokens) },
-  { key: "chatMessages", label: "Chat", numeric: true, value: (r) => r.chatMessages },
-  { key: "ccSessions", label: "CC sessions", numeric: true, value: (r) => r.ccSessions },
-  { key: "ccLocAdded", label: "CC loc+", numeric: true, value: (r) => r.ccLocAdded },
-  { key: "coworkMessages", label: "Cowork", numeric: true, value: (r) => r.coworkMessages },
-  { key: "webSearches", label: "Web", numeric: true, value: (r) => r.webSearches },
 ];
 
 // Must match core's UNASSIGNED_KEY (packages/core/src/projects.ts) — the bucket for
@@ -132,7 +118,8 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
   const [loading, setLoading] = useState(false);
 
   const metric = METRICS.find((m) => String(m.key) === metricKey) ?? METRICS[0]!;
-  const sortOrder: SortOrder = sortOrderRaw === "alpha" ? "alpha" : "size";
+  const sortOrder: SortOrder =
+    sortOrderRaw === "date" && dimension === CYCLE_DIMENSION_ID ? "date" : sortOrderRaw === "alpha" ? "alpha" : "size";
   const showCycles = showCyclesRaw !== "0";
 
   // The member list (for CSV facet values) — same source the Filter menu uses.
@@ -254,6 +241,9 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
   const scopeIsInferred = !explicitProject && Boolean(scopeProject);
   const scopeCycles = scopeProject ? cyclesForProject(scopeProject) : [];
   const cycleAvailable = scopeCycles.length > 0;
+  // Chronological order of the current project's cycles, keyed by name — for
+  // "Sort order: Date" — mirrors CycleIndex's own sort-by-start order.
+  const cycleOrder = useMemo(() => new Map(scopeCycles.map((c, i) => [c.name, i] as const)), [scopeCycles]);
 
   // Default "Stacking by" once dimensions load (unless a URL/previous pick is
   // still valid): prefer the first timeline facet (Project) when a projects
@@ -269,16 +259,46 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
 
   const bucket: ChartBucket = bucketRaw === "cycle" && cycleAvailable ? "cycle" : bucketRaw === "day" || bucketRaw === "month" ? bucketRaw : "week";
 
-  // Order groups for the chart (and the table's default) by the selected metric or by name.
+  // Order groups for the chart (and the table's default) by the selected metric,
+  // alphabetically, or — only offered when Stacking by is Cycle — chronologically
+  // by each cycle's actual start date. A group with no known cycle (shouldn't
+  // happen outside "(no cycle)") sorts last.
   const orderedGroups = useMemo(() => {
     const groups = [...(data?.groups ?? [])];
     if (sortOrder === "alpha") {
       groups.sort((a, b) => a.key.localeCompare(b.key));
+    } else if (sortOrder === "date") {
+      groups.sort((a, b) => (cycleOrder.get(a.key) ?? Infinity) - (cycleOrder.get(b.key) ?? Infinity));
     } else {
       groups.sort((a, b) => Number(b[metric.key]) - Number(a[metric.key]));
     }
     return groups;
-  }, [data, sortOrder, metric.key]);
+  }, [data, sortOrder, metric.key, cycleOrder]);
+
+  // The "Group" column sorts chronologically when Stacking by is Cycle (clicking
+  // its header to re-sort alphabetically wouldn't be useful for cycle names
+  // anyway), else by name as usual; always displays the group's name either way.
+  const columns: Column<GroupRow>[] = useMemo(
+    () => [
+      {
+        key: "key",
+        label: "Group",
+        value: (r) => (dimension === CYCLE_DIMENSION_ID ? cycleOrder.get(r.key) ?? Number.MAX_SAFE_INTEGER : r.key),
+        render: (r) => r.key,
+      },
+      { key: "developers", label: "Devs", numeric: true, value: (r) => r.developers },
+      { key: "activeUserDays", label: "Active days", numeric: true, value: (r) => r.activeUserDays, render: (r) => r.activeUserDays.toFixed(1) },
+      { key: "costCents", label: "Cost", numeric: true, value: (r) => r.costCents, render: (r) => usd(r.costCents) },
+      { key: "avgCostPerDeveloper", label: "$/dev", numeric: true, value: (r) => r.avgCostPerDeveloper, render: (r) => usd(r.avgCostPerDeveloper) },
+      { key: "totalTokens", label: "Tokens", numeric: true, value: (r) => r.totalTokens, render: (r) => tokens(r.totalTokens) },
+      { key: "chatMessages", label: "Chat", numeric: true, value: (r) => r.chatMessages },
+      { key: "ccSessions", label: "CC sessions", numeric: true, value: (r) => r.ccSessions },
+      { key: "ccLocAdded", label: "CC loc+", numeric: true, value: (r) => r.ccLocAdded },
+      { key: "coworkMessages", label: "Cowork", numeric: true, value: (r) => r.coworkMessages },
+      { key: "webSearches", label: "Web", numeric: true, value: (r) => r.webSearches },
+    ],
+    [dimension, cycleOrder],
+  );
 
   const chartData = orderedGroups.map((g) => ({ name: g.key, value: Number(g[metric.key]) }));
   // The chart always stacks by "Stacking by" (the primary dimension) — the
@@ -481,6 +501,7 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
               <select value={sortOrder} onChange={(e) => setSortOrder(e.target.value)}>
                 <option value="size">Size (metric)</option>
                 <option value="alpha">Name (A–Z)</option>
+                {dimension === CYCLE_DIMENSION_ID && <option value="date">Date</option>}
               </select>
             </div>
           </div>
@@ -534,8 +555,8 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
             <SortableTable
               columns={columns}
               rows={orderedGroups}
-              initialSort={sortOrder === "alpha" ? "key" : String(metric.key)}
-              initialDesc={sortOrder !== "alpha"}
+              initialSort={sortOrder === "size" ? String(metric.key) : "key"}
+              initialDesc={sortOrder === "size"}
             />
           )}
         </>
