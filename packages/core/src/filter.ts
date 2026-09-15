@@ -79,15 +79,20 @@ export function mergeFilterSpecs(a: FilterSpec | null | undefined, b: FilterSpec
 }
 
 /**
- * A FilterSpec that hides every project value except `project` (including
+ * A FilterSpec that hides every value of `facet` except `value` (including
  * UNASSIGNED_KEY, which {@link distinctFacetValues} always includes) — i.e.
- * "scope the data to this one project". Meant to be combined with the active
- * member filter via {@link mergeFilterSpecs} before a single call to
- * {@link applyTimelineFilterToKeyer} or {@link makeRowWeight}.
+ * "scope the data to this one project/team/client". Meant to be combined
+ * with the active member filter via {@link mergeFilterSpecs} before a single
+ * call to {@link applyTimelineFilterToKeyer} or {@link makeRowWeight}.
  */
+export function timelineScopeSpec(index: MembershipIndex, facet: TimelineFacet, value: string): FilterSpec {
+  const hidden = distinctFacetValues(index, facet).filter((v) => v !== value);
+  return { hidden: { [timelineDimensionId(facet)]: hidden } };
+}
+
+/** timelineScopeSpec fixed to the "project" facet — kept for existing callers. */
 export function projectScopeSpec(index: MembershipIndex, project: string): FilterSpec {
-  const hiddenProjects = distinctFacetValues(index, "project").filter((v) => v !== project);
-  return { hidden: { [timelineDimensionId("project")]: hiddenProjects } };
+  return timelineScopeSpec(index, "project", project);
 }
 
 /** Parse a JSON filter spec from a query param. Returns null when absent or invalid. */

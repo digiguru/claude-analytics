@@ -33,7 +33,7 @@ import {
   parseAttributesCsv,
   parseFilterParam,
   parseProjectsYaml,
-  projectScopeSpec,
+  timelineScopeSpec,
   resolveDimension,
   resolveTimelineDimension,
   splitCombinedKey,
@@ -48,6 +48,7 @@ import {
   type FilterSpec,
   type GroupRow,
   type RowKeyer,
+  type TimelineFacet,
 } from "@claude-analytics/core";
 import { AppState } from "./state.js";
 
@@ -97,18 +98,33 @@ function emailPredicate(spec: FilterSpec | null): (email: string) => boolean {
 }
 
 /**
- * Resolve a `project` query value into a FilterSpec that hides every other
- * project (see projectScopeSpec), merged with the active member `filter` —
- * union, not double-wrapping, so cross-facet scaling never applies twice.
- * Throws on an unknown project name.
+ * Which timeline facet the `scope` param narrows: whichever facet the current
+ * `groupBy` resolves to (so picking "Team" as Group By scopes by team, "Client"
+ * by client), else "project" as the sensible default (e.g. when grouping by a
+ * CSV column or Member).
  */
-function resolveProjectScope(project: string | undefined, filterSpec: FilterSpec | null): FilterSpec | null {
-  if (!project) return filterSpec;
-  const known = distinctFacetValues(state.memberships, "project");
-  if (!known.includes(project)) {
-    throw new Error(`Unknown project "${project}". Available: ${known.join(", ")}.`);
+function scopeFacetFor(groupByRaw: unknown): TimelineFacet {
+  return resolveTimelineDimension(String(groupByRaw ?? "")) ?? "project";
+}
+
+/**
+ * Resolve a `scope` query value into a FilterSpec that hides every other
+ * value of the relevant facet (see scopeFacetFor/timelineScopeSpec), merged
+ * with the active member `filter` — union, not double-wrapping, so
+ * cross-facet scaling never applies twice. Throws on an unknown value.
+ */
+function resolveTimelineScope(
+  scopeValue: string | undefined,
+  groupByRaw: unknown,
+  filterSpec: FilterSpec | null,
+): FilterSpec | null {
+  if (!scopeValue) return filterSpec;
+  const facet = scopeFacetFor(groupByRaw);
+  const known = distinctFacetValues(state.memberships, facet);
+  if (!known.includes(scopeValue)) {
+    throw new Error(`Unknown ${TIMELINE_DIMENSION_LABELS[facet]} "${scopeValue}". Available: ${known.join(", ")}.`);
   }
-  return mergeFilterSpecs(filterSpec, projectScopeSpec(state.memberships, project));
+  return mergeFilterSpecs(filterSpec, timelineScopeSpec(state.memberships, facet, scopeValue));
 }
 
 /**
@@ -211,7 +227,7 @@ app.get<{ Querystring: RangeQuery & { filter?: string } }>("/api/overview", asyn
 });
 
 app.get<{
-  Querystring: RangeQuery & { groupBy?: string; secondary?: string; product?: string; filter?: string; project?: string };
+  Querystring: RangeQuery & { groupBy?: string; secondary?: string; product?: string; filter?: string; scope?: string };
 }>("/api/groups", async (req, reply) => {
   let selector: GroupSelector;
   let secondarySelector: GroupSelector | null = null;
@@ -219,7 +235,7 @@ app.get<{
   try {
     selector = resolveGroupBy(req.query.groupBy);
     if (req.query.secondary) secondarySelector = resolveGroupBy(req.query.secondary);
-    spec = resolveProjectScope(req.query.project, parseFilterParam(req.query.filter));
+    spec = resolveTimelineScope(req.query.scope, req.query.groupBy, parseFilterParam(req.query.filter));
   } catch (err) {
     return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
   }
@@ -245,7 +261,7 @@ app.get<{
   // Team, Secondary by Member to see who made up each team's cost. Filtered
   // independently per dimension (via filteredKeyer) *before* combining, so
   // applyTimelineFilterToKeyer's same-facet-as-groupBy logic still sees each
-  // keyer's own bare keys rather than a combined "primary secondary" string.
+  // keyer's own bare keys rather than a combined "primarysecondary" string.
   let secondaryDimension: string | null = null;
   let secondaryGroups: (GroupRowWithPrimary)[] = [];
   let secondaryTimeseries: typeof timeseries = [];
@@ -329,14 +345,14 @@ app.get<{ Params: { email: string }; Querystring: RangeQuery }>("/api/members/:e
   return { ...summary, projects };
 });
 
-app.get<{ Querystring: RangeQuery & { groupBy?: string; product?: string; filter?: string; project?: string } }>(
+app.get<{ Querystring: RangeQuery & { groupBy?: string; product?: string; filter?: string; scope?: string } }>(
   "/api/export",
   async (req, reply) => {
     let selector: GroupSelector;
     let spec: FilterSpec | null;
     try {
       selector = resolveGroupBy(req.query.groupBy);
-      spec = resolveProjectScope(req.query.project, parseFilterParam(req.query.filter));
+      spec = resolveTimelineScope(req.query.scope, req.query.groupBy, parseFilterParam(req.query.filter));
     } catch (err) {
       return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
     }
@@ -356,14 +372,14 @@ app.get<{ Querystring: RangeQuery & { groupBy?: string; product?: string; filter
   },
 );
 
-app.get<{ Querystring: RangeQuery & { groupBy?: string; product?: string; filter?: string; project?: string } }>(
+app.get<{ Querystring: RangeQuery & { groupBy?: string; product?: string; filter?: string; scope?: string } }>(
   "/api/export/groups-daily",
   async (req, reply) => {
     let selector: GroupSelector;
     let spec: FilterSpec | null;
     try {
       selector = resolveGroupBy(req.query.groupBy);
-      spec = resolveProjectScope(req.query.project, parseFilterParam(req.query.filter));
+      spec = resolveTimelineScope(req.query.scope, req.query.groupBy, parseFilterParam(req.query.filter));
     } catch (err) {
       return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
     }

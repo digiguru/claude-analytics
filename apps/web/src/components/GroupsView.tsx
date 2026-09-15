@@ -108,7 +108,7 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
   const [dimension, setDimension] = useUrlParam("groupBy", "");
   const [secondaryRaw, setSecondary] = useUrlParam("secondary", "");
   const [product, setProduct] = useUrlParam("product", "");
-  const [project, setProject] = useUrlParam("project", "");
+  const [scopeValue, setScopeValue] = useUrlParam("scope", "");
   const [metricKey, setMetricKey] = useUrlParam("metric", String(METRICS[0]!.key));
   const [sortOrderRaw, setSortOrder] = useUrlParam("sort", "size");
   const [bucketRaw, setBucket] = useUrlParam("granularity", "week");
@@ -120,10 +120,25 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
   const sortOrder: SortOrder = sortOrderRaw === "alpha" ? "alpha" : "size";
   const showCycles = showCyclesRaw !== "0";
 
-  const projectNames = useMemo(
-    () => (timelineDimensions.find((d) => d.id === "@project")?.values ?? []).filter((v) => v !== UNASSIGNED_KEY),
-    [timelineDimensions],
+  // Which timeline facet the scope dropdown narrows: whatever the primary
+  // Group By resolves to (Project/Team/Client), else "@project" as the default
+  // (e.g. when grouping by a CSV column or Member) — Cycle definitions are
+  // always project-specific regardless of which facet is actually scoped.
+  const scopeFacetDim = useMemo(
+    () => timelineDimensions.find((d) => d.id === dimension) ?? timelineDimensions.find((d) => d.id === "@project"),
+    [timelineDimensions, dimension],
   );
+  const scopeLabel = scopeFacetDim?.label ?? "Project";
+  const scopeOptions = useMemo(
+    () => (scopeFacetDim?.values ?? []).filter((v) => v !== UNASSIGNED_KEY),
+    [scopeFacetDim],
+  );
+
+  // Reset the scope pick if it's not valid for the (possibly just-changed) facet —
+  // e.g. switching Group By from Project to Team invalidates a picked project name.
+  useEffect(() => {
+    if (scopeValue && !scopeOptions.includes(scopeValue)) setScopeValue("", true);
+  }, [scopeOptions, scopeValue, setScopeValue]);
 
   // Secondary (drill-down) breakdown options: every Group By choice, plus the
   // always-available Member dimension, minus whichever is currently primary
@@ -165,7 +180,7 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
           to || undefined,
           product || undefined,
           filterQuery,
-          project || undefined,
+          scopeValue || undefined,
           secondary || undefined,
         ),
       );
@@ -174,17 +189,20 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
     } finally {
       setLoading(false);
     }
-  }, [dimension, product, project, secondary, from, to, filterQuery, onError]);
+  }, [dimension, product, scopeValue, secondary, from, to, filterQuery, onError]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  // The project this chart is effectively scoped to: the explicit picker, else
-  // (when it settles to exactly one) the active member filter. Drives Cycle
-  // granularity + annotation; never auto-selects Cycle, only offers it.
-  const scopeProject = project || (data?.activeProjects.length === 1 ? data.activeProjects[0]! : null);
-  const scopeIsInferred = !project && Boolean(scopeProject);
+  // The PROJECT this chart is effectively scoped to, for Cycle purposes (cycles
+  // are always project-specific): an explicit pick from the scope dropdown when
+  // it's currently scoped BY project, else — regardless of what narrowed it
+  // (a Team/Client scope pick, or the member filter) — whichever single project
+  // is the only one left active. Never auto-selects Cycle granularity, only offers it.
+  const explicitProject = scopeFacetDim?.id === "@project" ? scopeValue : "";
+  const scopeProject = explicitProject || (data?.activeProjects.length === 1 ? data.activeProjects[0]! : null);
+  const scopeIsInferred = !explicitProject && Boolean(scopeProject);
   const scopeCycles = scopeProject ? cyclesForProject(scopeProject) : [];
   const cycleAvailable = scopeCycles.length > 0;
 
@@ -267,13 +285,13 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
             </select>
           </div>
         )}
-        {projectNames.length > 0 && (
+        {scopeOptions.length > 0 && (
           <div>
-            <label>Project</label>
-            <select value={project} onChange={(e) => setProject(e.target.value)}>
-              <option value="">All projects</option>
-              {projectNames.map((p) => (
-                <option key={p} value={p}>{p}</option>
+            <label>{scopeLabel}</label>
+            <select value={scopeValue} onChange={(e) => setScopeValue(e.target.value)}>
+              <option value="">All {scopeLabel.toLowerCase()}s</option>
+              {scopeOptions.map((v) => (
+                <option key={v} value={v}>{v}</option>
               ))}
             </select>
           </div>
@@ -302,10 +320,10 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
             <option value="alpha">Name (A–Z)</option>
           </select>
         </div>
-        <a href={api.exportUrl(dimension, from || undefined, to || undefined, product || undefined, filterQuery, project || undefined)}>
+        <a href={api.exportUrl(dimension, from || undefined, to || undefined, product || undefined, filterQuery, scopeValue || undefined)}>
           <button className="secondary" type="button">Export CSV</button>
         </a>
-        <a href={api.exportGroupsDailyUrl(dimension, from || undefined, to || undefined, product || undefined, filterQuery, project || undefined)}>
+        <a href={api.exportGroupsDailyUrl(dimension, from || undefined, to || undefined, product || undefined, filterQuery, scopeValue || undefined)}>
           <button className="secondary" type="button">Export daily CSV</button>
         </a>
       </div>
@@ -315,7 +333,7 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
       {scopeIsInferred && scopeProject && (
         <p className="muted" style={{ marginTop: -8, marginBottom: 12 }}>
           <span className="pill">Scoped to {scopeProject}</span>
-          (via the active member filter — the totals above already reflect it)
+          (the totals above already reflect it)
         </p>
       )}
 
@@ -446,7 +464,7 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
         <p className="muted">No cached data for this range. Sync first.</p>
       )}
 
-      {data && !isTimelineDimension && !project && data.unmatchedCount > 0 && (
+      {data && !isTimelineDimension && !scopeValue && data.unmatchedCount > 0 && (
         <p className="muted" style={{ marginTop: 12 }}>
           {data.unmatchedCount} developer(s) in analytics have no CSV match (grouped as “(unmatched)”). Upload a CSV
           whose <code>email</code> column matches your org's emails to break these out.

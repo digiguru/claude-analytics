@@ -5,6 +5,7 @@ import {
   makeRowWeight,
   mergeFilterSpecs,
   projectScopeSpec,
+  timelineScopeSpec,
   type FilterSpec,
 } from "./filter.js";
 import { csvKeyer, timelineKeyer, type RowKeyer } from "./aggregate.js";
@@ -56,6 +57,14 @@ test("projectScopeSpec hides every other project, including Unassigned", () => {
   assert.ok(spec.hidden["@project"]!.includes("Globex"));
   assert.ok(spec.hidden["@project"]!.includes(UNASSIGNED_KEY));
   assert.ok(!spec.hidden["@project"]!.includes("Acme"));
+});
+
+test("timelineScopeSpec works for any facet, not just project (e.g. team)", () => {
+  const index = loadIndex();
+  const spec = timelineScopeSpec(index, "team", "Platform");
+  // Both fixture projects (Acme, Globex) are on team "Platform", so no other
+  // team value exists to hide besides Unassigned.
+  assert.deepEqual(spec.hidden["@team"], [UNASSIGNED_KEY]);
 });
 
 test("applyTimelineFilterToKeyer: same-facet hide drops matching entries with no renormalization", () => {

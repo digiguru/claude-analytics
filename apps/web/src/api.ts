@@ -217,10 +217,10 @@ export const api = {
     to?: string,
     product?: string,
     filter?: string,
-    project?: string,
+    scope?: string,
     secondary?: string,
   ) =>
-    fetch(`/api/groups${qs({ groupBy: dimension, from, to, product, filter, project, secondary })}`).then(json<GroupsResponse>),
+    fetch(`/api/groups${qs({ groupBy: dimension, from, to, product, filter, scope, secondary })}`).then(json<GroupsResponse>),
   users: (from?: string, to?: string) => fetch(`/api/users${qs({ from, to })}`).then(json<{ users: UserListEntry[] }>),
   member: (email: string, from?: string, to?: string) =>
     fetch(`/api/members/${encodeURIComponent(email)}${qs({ from, to })}`).then(json<MemberSummary>),
@@ -236,10 +236,10 @@ export const api = {
       json<{ ok: boolean; projects: number; members: number; cycles: number; warnings: string[]; source: string }>,
     );
   },
-  exportUrl: (dimension: Dimension, from?: string, to?: string, product?: string, filter?: string, project?: string) =>
-    `/api/export${qs({ groupBy: dimension, from, to, product, filter, project })}`,
-  exportGroupsDailyUrl: (dimension: Dimension, from?: string, to?: string, product?: string, filter?: string, project?: string) =>
-    `/api/export/groups-daily${qs({ groupBy: dimension, from, to, product, filter, project })}`,
+  exportUrl: (dimension: Dimension, from?: string, to?: string, product?: string, filter?: string, scope?: string) =>
+    `/api/export${qs({ groupBy: dimension, from, to, product, filter, scope })}`,
+  exportGroupsDailyUrl: (dimension: Dimension, from?: string, to?: string, product?: string, filter?: string, scope?: string) =>
+    `/api/export/groups-daily${qs({ groupBy: dimension, from, to, product, filter, scope })}`,
   exportMembersUrl: (from?: string, to?: string, filter?: string) =>
     `/api/export/members${qs({ from, to, filter })}`,
   exportMembersLongUrl: (from?: string, to?: string, filter?: string) =>
