@@ -117,6 +117,125 @@ function isBlank(v: unknown): boolean {
 }
 
 /**
+ * Parse and validate one project's `cycles` list into resolved,
+ * non-overlapping Cycles: chronological, ends derived from (or clamped
+ * against) the next cycle's start, and checked against the project's own
+ * membership span. Returns `[]` for no cycles declared, or none that parsed
+ * cleanly. `warnings` is appended to in place so every project's parse
+ * contributes to the same combined list for the whole file.
+ */
+export function parseProjectCycles(
+  name: string,
+  rawCycles: unknown,
+  projectMemberships: Membership[],
+  warnings: string[],
+): Cycle[] {
+  const list = Array.isArray(rawCycles) ? (rawCycles as RawCycle[]) : [];
+  if (list.length === 0) return [];
+  if (projectMemberships.length === 0) {
+    warnings.push(`Project "${name}": has cycles but no valid members — dates can't be checked against any assignment.`);
+  }
+
+  type ParsedCycle = { name: string; start: string; end: string | null };
+  const parsed: ParsedCycle[] = [];
+  const seenCycleNames = new Map<string, number>(); // lowercased name -> count so far
+
+  list.forEach((c, cycleIdx) => {
+    const who = `Project "${name}", cycle #${cycleIdx + 1}`;
+    if (typeof c !== "object" || c === null) {
+      warnings.push(`${who}: not an object — skipped.`);
+      return;
+    }
+    let cname = typeof c.name === "string" ? c.name.trim() : "";
+    if (!cname) {
+      warnings.push(`${who}: missing "name" — skipped.`);
+      return;
+    }
+    const cstart = typeof c.start === "string" ? c.start.trim() : "";
+    if (!DATE_RE.test(cstart)) {
+      warnings.push(`${who} (${cname}): missing/invalid "start" date (want YYYY-MM-DD) — skipped.`);
+      return;
+    }
+    let cend: string | null = null;
+    if (!isBlank(c.end)) {
+      const endStr = String(c.end).trim();
+      if (!DATE_RE.test(endStr)) {
+        warnings.push(`${who} (${cname}): invalid "end" date "${endStr}" — treated as open-ended.`);
+      } else {
+        cend = endStr;
+      }
+    }
+    if (cend !== null && cend < cstart) {
+      warnings.push(`${who} (${cname}): "end" (${cend}) is before "start" (${cstart}) — skipped.`);
+      return;
+    }
+
+    const lower = cname.toLowerCase();
+    const seenCount = (seenCycleNames.get(lower) ?? 0) + 1;
+    seenCycleNames.set(lower, seenCount);
+    if (seenCount > 1) {
+      const deduped = `${cname} (${seenCount})`;
+      warnings.push(`Project "${name}": duplicate cycle name "${cname}" — using "${deduped}" for this later one.`);
+      cname = deduped;
+    }
+
+    parsed.push({ name: cname, start: cstart, end: cend });
+  });
+
+  // Sort chronologically; Array#sort is stable, so equal-start cycles keep
+  // their declaration order rather than being reordered arbitrarily.
+  parsed.sort((a, b) => a.start.localeCompare(b.start));
+
+  for (let i = 1; i < parsed.length; i++) {
+    if (parsed[i]!.start === parsed[i - 1]!.start) {
+      warnings.push(
+        `Project "${name}": cycles "${parsed[i - 1]!.name}" and "${parsed[i]!.name}" share the same start date (${parsed[i]!.start}) — ordering follows declaration order.`,
+      );
+    }
+  }
+
+  // Resolve ends so cycles never overlap: an omitted end runs up to (but not
+  // including) the next cycle's start; an explicit end that reaches into the
+  // next cycle is clamped the same way. The final cycle's omitted end stays
+  // null (open-ended) — resolved against the chart's last rendered bucket at
+  // display time, never against "today", so parsing stays clock-free.
+  const resolved: Cycle[] = [];
+  for (let i = 0; i < parsed.length; i++) {
+    const c = parsed[i]!;
+    const next = parsed[i + 1];
+    let end = c.end;
+    let derivedEnd = false;
+    if (next) {
+      const cappedEnd = prevDay(next.start);
+      if (end === null) {
+        end = cappedEnd;
+        derivedEnd = true;
+      } else if (end >= next.start) {
+        warnings.push(
+          `Project "${name}": cycle "${c.name}" (ends ${end}) overlaps the next cycle "${next.name}" (starts ${next.start}) — truncated to ${cappedEnd}.`,
+        );
+        end = cappedEnd;
+      }
+    }
+    resolved.push({ project: name, name: c.name, start: c.start, end, derivedEnd });
+  }
+
+  if (projectMemberships.length > 0) {
+    const spanStart = projectMemberships.reduce((s, m) => (m.start < s ? m.start : s), projectMemberships[0]!.start);
+    const spanEndOpen = projectMemberships.some((m) => m.end === null);
+    const spanEnd = spanEndOpen ? null : projectMemberships.reduce((s, m) => (m.end! > (s ?? "") ? m.end! : s), projectMemberships[0]!.end);
+    for (const c of resolved) {
+      const overlapsSpan = c.start <= (spanEnd ?? "9999-99-99") && spanStart <= (c.end ?? "9999-99-99");
+      if (!overlapsSpan) {
+        warnings.push(`Project "${name}": cycle "${c.name}" (${c.start} – ${c.end ?? "ongoing"}) falls outside every member assignment — will show no cost.`);
+      }
+    }
+  }
+
+  return resolved;
+}
+
+/**
  * Parse and validate a projects YAML file into a membership index. Throws only
  * on structural errors (not YAML, missing `projects`, a member with no email or
  * no start date); everything else that looks like a mistake is a warning.
@@ -188,9 +307,7 @@ export function parseProjectsYaml(text: string): ProjectsParseResult {
         return;
       }
       if ((end ?? "9999-99-99") < API_FLOOR) {
-        warnings.push(
-          `${who} (${email}): assignment ends before analytics data begins (${API_FLOOR}) — will never contribute cost.`,
-        );
+        warnings.push(`${who} (${email}): assignment ends before analytics data begins (${API_FLOOR}) — will never contribute cost.`);
       }
 
       let allocation = 1;
@@ -212,121 +329,10 @@ export function parseProjectsYaml(text: string): ProjectsParseResult {
     });
 
     // --- cycles: named periods within this project's timeline ---
-    const rawCycles = Array.isArray(raw.cycles) ? (raw.cycles as RawCycle[]) : [];
-    if (rawCycles.length > 0) {
-      if (projectMemberships.length === 0) {
-        warnings.push(
-          `Project "${name}": has cycles but no valid members — dates can't be checked against any assignment.`,
-        );
-      }
-
-      type ParsedCycle = { name: string; start: string; end: string | null };
-      const parsed: ParsedCycle[] = [];
-      const seenCycleNames = new Map<string, number>(); // lowercased name -> count so far
-
-      rawCycles.forEach((c, cycleIdx) => {
-        const who = `Project "${name}", cycle #${cycleIdx + 1}`;
-        if (typeof c !== "object" || c === null) {
-          warnings.push(`${who}: not an object — skipped.`);
-          return;
-        }
-        let cname = typeof c.name === "string" ? c.name.trim() : "";
-        if (!cname) {
-          warnings.push(`${who}: missing "name" — skipped.`);
-          return;
-        }
-        const cstart = typeof c.start === "string" ? c.start.trim() : "";
-        if (!DATE_RE.test(cstart)) {
-          warnings.push(`${who} (${cname}): missing/invalid "start" date (want YYYY-MM-DD) — skipped.`);
-          return;
-        }
-        let cend: string | null = null;
-        if (!isBlank(c.end)) {
-          const endStr = String(c.end).trim();
-          if (!DATE_RE.test(endStr)) {
-            warnings.push(`${who} (${cname}): invalid "end" date "${endStr}" — treated as open-ended.`);
-          } else {
-            cend = endStr;
-          }
-        }
-        if (cend !== null && cend < cstart) {
-          warnings.push(`${who} (${cname}): "end" (${cend}) is before "start" (${cstart}) — skipped.`);
-          return;
-        }
-
-        const lower = cname.toLowerCase();
-        const seenCount = (seenCycleNames.get(lower) ?? 0) + 1;
-        seenCycleNames.set(lower, seenCount);
-        if (seenCount > 1) {
-          const deduped = `${cname} (${seenCount})`;
-          warnings.push(`Project "${name}": duplicate cycle name "${cname}" — using "${deduped}" for this later one.`);
-          cname = deduped;
-        }
-
-        parsed.push({ name: cname, start: cstart, end: cend });
-      });
-
-      // Sort chronologically; Array#sort is stable, so equal-start cycles keep
-      // their declaration order rather than being reordered arbitrarily.
-      parsed.sort((a, b) => a.start.localeCompare(b.start));
-
-      for (let i = 1; i < parsed.length; i++) {
-        if (parsed[i]!.start === parsed[i - 1]!.start) {
-          warnings.push(
-            `Project "${name}": cycles "${parsed[i - 1]!.name}" and "${parsed[i]!.name}" share the same start date (${parsed[i]!.start}) — ordering follows declaration order.`,
-          );
-        }
-      }
-
-      // Resolve ends so cycles never overlap: an omitted end runs up to (but not
-      // including) the next cycle's start; an explicit end that reaches into the
-      // next cycle is clamped the same way. The final cycle's omitted end stays
-      // null (open-ended) — resolved against the chart's last rendered bucket at
-      // display time, never against "today", so parsing stays clock-free.
-      const resolved: Cycle[] = [];
-      for (let i = 0; i < parsed.length; i++) {
-        const c = parsed[i]!;
-        const next = parsed[i + 1];
-        let end = c.end;
-        let derivedEnd = false;
-        if (next) {
-          const cappedEnd = prevDay(next.start);
-          if (end === null) {
-            end = cappedEnd;
-            derivedEnd = true;
-          } else if (end >= next.start) {
-            warnings.push(
-              `Project "${name}": cycle "${c.name}" (ends ${end}) overlaps the next cycle "${next.name}" (starts ${next.start}) — truncated to ${cappedEnd}.`,
-            );
-            end = cappedEnd;
-          }
-        }
-        resolved.push({ project: name, name: c.name, start: c.start, end, derivedEnd });
-      }
-
-      if (projectMemberships.length > 0) {
-        const spanStart = projectMemberships.reduce(
-          (s, m) => (m.start < s ? m.start : s),
-          projectMemberships[0]!.start,
-        );
-        const spanEndOpen = projectMemberships.some((m) => m.end === null);
-        const spanEnd = spanEndOpen
-          ? null
-          : projectMemberships.reduce((s, m) => (m.end! > (s ?? "") ? m.end! : s), projectMemberships[0]!.end);
-        for (const c of resolved) {
-          const overlapsSpan = c.start <= (spanEnd ?? "9999-99-99") && spanStart <= (c.end ?? "9999-99-99");
-          if (!overlapsSpan) {
-            warnings.push(
-              `Project "${name}": cycle "${c.name}" (${c.start} – ${c.end ?? "ongoing"}) falls outside every member assignment — will show no cost.`,
-            );
-          }
-        }
-      }
-
-      if (resolved.length > 0) {
-        cycles.set(name, resolved);
-        cycleCount += resolved.length;
-      }
+    const resolved = parseProjectCycles(name, raw.cycles, projectMemberships, warnings);
+    if (resolved.length > 0) {
+      cycles.set(name, resolved);
+      cycleCount += resolved.length;
     }
   });
 
@@ -337,8 +343,7 @@ export function parseProjectsYaml(text: string): ProjectsParseResult {
   for (const [email, list] of index) {
     for (let i = 0; i < list.length; i++) {
       for (let j = i + 1; j < list.length; j++) {
-        const a = list[i]!,
-          b = list[j]!;
+        const a = list[i]!, b = list[j]!;
         if (a.project === b.project) continue;
         const overlap = a.start <= (b.end ?? "9999-99-99") && b.start <= (a.end ?? "9999-99-99");
         if (overlap && a.allocation === 1 && b.allocation === 1) {
