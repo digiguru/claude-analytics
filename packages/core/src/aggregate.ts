@@ -1,5 +1,6 @@
 import type { AttributeMap } from "./csv.js";
 import { groupKey } from "./join.js";
+import { membershipKeys, type MembershipIndex, type TimelineFacet } from "./projects.js";
 import type {
   Attributes,
   Dimension,
@@ -163,7 +164,9 @@ export function buildOverviewFromUsers(userProducts: UserProductRow[], userDays:
 }
 
 // ============================================================================
-// 2) Group analysis (across CSV dimensions) — cost, usage, activity per group
+// 2) Group analysis (across CSV/timeline dimensions) — cost, usage, activity
+//    per group, plus a keyer abstraction shared by the CSV path (join.ts) and
+//    the date-aware timeline path (projects.ts).
 // ============================================================================
 
 export interface GroupRow {
@@ -213,19 +216,84 @@ function blankAcc(key: string): GroupAcc {
 }
 
 /**
- * Aggregate per-user cost/tokens (userProducts) and activity (userDays) by a CSV
- * dimension. Optionally restrict to a single product (cost/tokens only).
+ * Group keys (with weights summing to 1) that a row's email/date maps to along
+ * some dimension. The CSV path (below) ignores the date and always returns a
+ * single full-weight key; the timeline path (projects.ts) is date-aware and
+ * can split a row's cost across concurrent memberships.
  */
-export function aggregateByDimension(
+export type RowKeyer = (email: string, date: string) => { key: string; weight: number }[];
+
+/** A keyer over a CSV attribute dimension — date is ignored, weight is always 1. */
+export function csvKeyer(attributes: AttributeMap, dimension: Dimension): RowKeyer {
+  return (email) => [{ key: groupKey(attributes, email, dimension), weight: 1 }];
+}
+
+/** A keyer over a timeline facet (project/team/client) — date-aware, weighted by allocation. */
+export function timelineKeyer(index: MembershipIndex, facet: TimelineFacet): RowKeyer {
+  return (email, date) => membershipKeys(index, email, date, facet);
+}
+
+/**
+ * Scale a userProducts/userDays row's numeric metrics by a weight in [0,1].
+ * Used where a keyer isn't available (building the org-style overview, or
+ * member exports, from raw per-user rows) but a timeline filter still needs
+ * to shave off a fractional share of a row's cost — see makeRowWeight in
+ * filter.ts. A weight of 1 returns the row unchanged (no copy).
+ */
+export function scaleUserProductRow(r: UserProductRow, weight: number): UserProductRow {
+  if (weight === 1) return r;
+  return {
+    ...r,
+    costCents: r.costCents * weight,
+    totalTokens: r.totalTokens * weight,
+    inputTokens: r.inputTokens * weight,
+    outputTokens: r.outputTokens * weight,
+    cacheReadTokens: r.cacheReadTokens * weight,
+    requests: r.requests * weight,
+  };
+}
+
+export function scaleUserDayRow(r: UserDayRow, weight: number): UserDayRow {
+  if (weight === 1) return r;
+  return {
+    ...r,
+    chatMessages: r.chatMessages * weight,
+    chatConversations: r.chatConversations * weight,
+    ccSessions: r.ccSessions * weight,
+    ccCommits: r.ccCommits * weight,
+    ccPrs: r.ccPrs * weight,
+    ccLocAdded: r.ccLocAdded * weight,
+    ccLocRemoved: r.ccLocRemoved * weight,
+    ccToolAccepted: r.ccToolAccepted * weight,
+    ccToolRejected: r.ccToolRejected * weight,
+    coworkMessages: r.coworkMessages * weight,
+    coworkSessions: r.coworkSessions * weight,
+    designMessages: r.designMessages * weight,
+    officeMessages: r.officeMessages * weight,
+    webSearches: r.webSearches * weight,
+  };
+}
+
+/**
+ * Aggregate per-user cost/tokens (userProducts) and activity (userDays) using a
+ * row keyer. Optionally restrict to a single product (cost/tokens only). Every
+ * numeric accumulation is scaled by the row's weight for its key, so a person
+ * split across multiple keys (e.g. two concurrent projects) contributes a
+ * fractional share to each rather than being double-counted.
+ *
+ * `developers` counts distinct emails that touched the group at all (not a
+ * fractional count) — someone split 60/40 across two projects counts as a
+ * developer in both. `activeUserDays` accumulates fractionally to stay
+ * consistent with cost.
+ */
+export function aggregateByKeyer(
   userProducts: UserProductRow[],
   userDays: UserDayRow[],
-  attributes: AttributeMap,
-  dimension: Dimension,
+  keyer: RowKeyer,
   product?: string,
 ): GroupRow[] {
   const groups = new Map<string, GroupAcc>();
-  const acc = (email: string) => {
-    const key = groupKey(attributes, email, dimension);
+  const accFor = (key: string) => {
     let g = groups.get(key);
     if (!g) groups.set(key, (g = blankAcc(key)));
     return g;
@@ -234,14 +302,16 @@ export function aggregateByDimension(
   for (const r of userProducts) {
     if (product && r.product !== product) continue;
     if (!r.email) continue;
-    const g = acc(r.email);
-    g.emails.add(r.email);
-    g.costCents += r.costCents;
-    g.totalTokens += r.totalTokens;
-    g.inputTokens += r.inputTokens;
-    g.outputTokens += r.outputTokens;
-    g.requests += r.requests;
-    g.costByProduct[r.product] = (g.costByProduct[r.product] ?? 0) + r.costCents;
+    for (const { key, weight } of keyer(r.email, r.date)) {
+      const g = accFor(key);
+      g.emails.add(r.email);
+      g.costCents += r.costCents * weight;
+      g.totalTokens += r.totalTokens * weight;
+      g.inputTokens += r.inputTokens * weight;
+      g.outputTokens += r.outputTokens * weight;
+      g.requests += r.requests * weight;
+      g.costByProduct[r.product] = (g.costByProduct[r.product] ?? 0) + r.costCents * weight;
+    }
   }
 
   // Activity is not product-scoped except Claude Code; include it only for the
@@ -249,18 +319,20 @@ export function aggregateByDimension(
   if (!product) {
     for (const d of userDays) {
       if (!d.email) continue;
-      const g = acc(d.email);
-      g.emails.add(d.email);
       const active =
         d.chatMessages + d.ccSessions + d.coworkMessages + d.designMessages + d.officeMessages + d.webSearches > 0;
-      if (active) g.activeUserDays += 1;
-      g.chatMessages += d.chatMessages;
-      g.ccSessions += d.ccSessions;
-      g.ccLocAdded += d.ccLocAdded;
-      g.ccCommits += d.ccCommits;
-      g.ccPrs += d.ccPrs;
-      g.coworkMessages += d.coworkMessages;
-      g.webSearches += d.webSearches;
+      for (const { key, weight } of keyer(d.email, d.date)) {
+        const g = accFor(key);
+        g.emails.add(d.email);
+        if (active) g.activeUserDays += weight;
+        g.chatMessages += d.chatMessages * weight;
+        g.ccSessions += d.ccSessions * weight;
+        g.ccLocAdded += d.ccLocAdded * weight;
+        g.ccCommits += d.ccCommits * weight;
+        g.ccPrs += d.ccPrs * weight;
+        g.coworkMessages += d.coworkMessages * weight;
+        g.webSearches += d.webSearches * weight;
+      }
     }
   }
 
@@ -277,6 +349,59 @@ export function aggregateByDimension(
       };
     })
     .sort((a, b) => b.costCents - a.costCents);
+}
+
+/**
+ * Aggregate per-user cost/tokens (userProducts) and activity (userDays) by a CSV
+ * dimension. Optionally restrict to a single product (cost/tokens only).
+ */
+export function aggregateByDimension(
+  userProducts: UserProductRow[],
+  userDays: UserDayRow[],
+  attributes: AttributeMap,
+  dimension: Dimension,
+  product?: string,
+): GroupRow[] {
+  return aggregateByKeyer(userProducts, userDays, csvKeyer(attributes, dimension), product);
+}
+
+/** One group's cost/tokens on one day, for the cost-over-time chart. */
+export interface GroupDayRow {
+  date: string;
+  key: string;
+  costCents: number;
+  totalTokens: number;
+}
+
+/**
+ * Daily cost/tokens per group key (weighted, same semantics as aggregateByKeyer),
+ * for the Groups page's cost-over-time chart. `keys` is every key that appears,
+ * ordered by total cost descending, so callers get a stable stacking order.
+ */
+export function aggregateByKeyerOverTime(
+  userProducts: UserProductRow[],
+  keyer: RowKeyer,
+  product?: string,
+): { rows: GroupDayRow[]; keys: string[] } {
+  const byDateKey = new Map<string, GroupDayRow>();
+  const totalsByKey = new Map<string, number>();
+
+  for (const r of userProducts) {
+    if (product && r.product !== product) continue;
+    if (!r.email) continue;
+    for (const { key, weight } of keyer(r.email, r.date)) {
+      const id = `${r.date}\u0000${key}`;
+      let row = byDateKey.get(id);
+      if (!row) byDateKey.set(id, (row = { date: r.date, key, costCents: 0, totalTokens: 0 }));
+      row.costCents += r.costCents * weight;
+      row.totalTokens += r.totalTokens * weight;
+      totalsByKey.set(key, (totalsByKey.get(key) ?? 0) + r.costCents * weight);
+    }
+  }
+
+  const rows = [...byDateKey.values()].sort((a, b) => a.date.localeCompare(b.date));
+  const keys = [...totalsByKey.entries()].sort((a, b) => b[1] - a[1]).map(([key]) => key);
+  return { rows, keys };
 }
 
 // ============================================================================

@@ -1,6 +1,6 @@
 // Client-side filter model. Mirrors the server's makeEmailFilter semantics so the
 // member list filters identically to the aggregated views.
-import type { Attributes, UserListEntry } from "./api.js";
+import type { Attributes, TimelineDimension, UserListEntry } from "./api.js";
 
 /** Special facet for filtering on individual member emails. Matches core's EMAIL_FACET. */
 export const EMAIL_FACET = "__email__";
@@ -44,13 +44,20 @@ export function valueFor(attrs: Attributes | null, dimension: string): string {
   return BLANK_KEY;
 }
 
-/** Build the facet list (one per CSV dimension, plus a Member-email facet) from the user list. */
-export function buildFacets(users: UserListEntry[], dimensions: string[]): Facet[] {
+/** Build the facet list (CSV dimensions, timeline dimensions, plus a Member-email
+ *  facet) from the user list. Timeline facet values come pre-computed from the
+ *  server (every group that exists), not derived per-user like CSV facets. */
+export function buildFacets(
+  users: UserListEntry[],
+  dimensions: string[],
+  timelineDimensions: TimelineDimension[] = [],
+): Facet[] {
   const facets: Facet[] = dimensions.map((dim) => {
     const values = new Set<string>();
     for (const u of users) values.add(valueFor(u.attributes, dim));
     return { key: dim, label: dim, values: [...values].sort((a, b) => a.localeCompare(b)) };
   });
+  for (const t of timelineDimensions) facets.push({ key: t.id, label: t.label, values: t.values });
   facets.push({
     key: EMAIL_FACET,
     label: "Member (email)",
@@ -59,7 +66,12 @@ export function buildFacets(users: UserListEntry[], dimensions: string[]): Facet
   return facets;
 }
 
-/** Does a user pass the filter? (true = visible). Mirrors core's makeEmailFilter. */
+/**
+ * Does a user pass the filter? (true = visible). Mirrors core's makeEmailFilter
+ * for CSV facets; for timeline facets ("@project" etc.) a user passes unless
+ * EVERY group they overlapped with in range is hidden — see `user.groups`
+ * (activeFacetKeysInRange in core) for the "overlap" approximation this uses.
+ */
 export function userPasses(spec: FilterSpec | null | undefined, user: UserListEntry): boolean {
   if (isEmptyFilter(spec)) return true;
   const hidden = spec!.hidden;
@@ -67,6 +79,11 @@ export function userPasses(spec: FilterSpec | null | undefined, user: UserListEn
   if (emailHidden && emailHidden.includes(user.email)) return false;
   for (const [facet, values] of Object.entries(hidden)) {
     if (facet === EMAIL_FACET || !values?.length) continue;
+    if (facet.startsWith("@")) {
+      const groups = user.groups?.[facet] ?? [];
+      if (groups.length > 0 && groups.every((g) => values.includes(g))) return false;
+      continue;
+    }
     if (values.includes(valueFor(user.attributes, facet))) return false;
   }
   return true;

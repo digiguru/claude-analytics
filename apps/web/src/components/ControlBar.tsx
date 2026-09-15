@@ -14,9 +14,11 @@ interface Props {
 
 export function ControlBar({ status, from, to, onFrom, onTo, onChanged, onError, children }: Props) {
   const [syncing, setSyncing] = useState(false);
-  const [uploading, setUploading] = useState(false);
+  const [uploadingCsv, setUploadingCsv] = useState(false);
+  const [uploadingProjects, setUploadingProjects] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const projectsInput = useRef<HTMLInputElement>(null);
 
   async function doSync() {
     if (!from || !to) {
@@ -38,7 +40,7 @@ export function ControlBar({ status, from, to, onFrom, onTo, onChanged, onError,
 
   async function onFile(file: File | undefined) {
     if (!file) return;
-    setUploading(true);
+    setUploadingCsv(true);
     onError(null);
     try {
       const r = await api.uploadCsv(file);
@@ -47,8 +49,24 @@ export function ControlBar({ status, from, to, onFrom, onTo, onChanged, onError,
     } catch (e) {
       onError(e instanceof Error ? e.message : String(e));
     } finally {
-      setUploading(false);
+      setUploadingCsv(false);
       if (fileInput.current) fileInput.current.value = "";
+    }
+  }
+
+  async function onProjectsFile(file: File | undefined) {
+    if (!file) return;
+    setUploadingProjects(true);
+    onError(null);
+    try {
+      const r = await api.uploadProjects(file);
+      setNote(`Loaded projects: ${r.projects} project(s), ${r.members} membership(s).${r.warnings.length ? ` ${r.warnings.length} warning(s).` : ""}`);
+      await onChanged();
+    } catch (e) {
+      onError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setUploadingProjects(false);
+      if (projectsInput.current) projectsInput.current.value = "";
     }
   }
 
@@ -69,9 +87,9 @@ export function ControlBar({ status, from, to, onFrom, onTo, onChanged, onError,
         <button
           className="secondary"
           onClick={() => fileInput.current?.click()}
-          disabled={uploading}
+          disabled={uploadingCsv}
         >
-          {uploading ? "Uploading…" : "Upload CSV"}
+          {uploadingCsv ? "Uploading…" : "Upload CSV"}
         </button>
         <input
           ref={fileInput}
@@ -79,6 +97,20 @@ export function ControlBar({ status, from, to, onFrom, onTo, onChanged, onError,
           accept=".csv,text/csv"
           style={{ display: "none" }}
           onChange={(e) => onFile(e.target.files?.[0])}
+        />
+        <button
+          className="secondary"
+          onClick={() => projectsInput.current?.click()}
+          disabled={uploadingProjects}
+        >
+          {uploadingProjects ? "Uploading…" : "Upload projects YAML"}
+        </button>
+        <input
+          ref={projectsInput}
+          type="file"
+          accept=".yaml,.yml"
+          style={{ display: "none" }}
+          onChange={(e) => onProjectsFile(e.target.files?.[0])}
         />
         {children}
       </div>
@@ -90,6 +122,9 @@ export function ControlBar({ status, from, to, onFrom, onTo, onChanged, onError,
         <span className="pill">
           CSV: {status?.csvLoaded ? status.csvSource : "none loaded"}
         </span>
+        <span className="pill">
+          Projects: {status?.projectsLoaded ? status.projectsSource : "none loaded"}
+        </span>
         <span className="pill">Developers cached: {status?.developerCount ?? 0}</span>
         <span className="pill">
           Cached range:{" "}
@@ -99,6 +134,13 @@ export function ControlBar({ status, from, to, onFrom, onTo, onChanged, onError,
         </span>
         {note && <span className="muted"> {note}</span>}
       </div>
+
+      {status && status.projectWarnings.length > 0 && (
+        <p className="muted" style={{ marginTop: 8 }}>
+          {status.projectWarnings.length} projects-file warning(s):{" "}
+          {status.projectWarnings.join(" · ")}
+        </p>
+      )}
     </div>
   );
 }

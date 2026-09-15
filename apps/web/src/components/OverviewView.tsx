@@ -13,7 +13,7 @@ import {
   YAxis,
 } from "recharts";
 import { api, tokens, usd, type Overview } from "../api.js";
-import { xAxisProps } from "../charts.js";
+import { COLORS, xAxisProps } from "../charts.js";
 import { bucketLabel, prepareSeries, type Granularity } from "../series.js";
 import { SeriesControls } from "./SeriesControls.js";
 import { SortableTable, type Column } from "./SortableTable.js";
@@ -25,7 +25,6 @@ interface Props {
   onError: (msg: string | null) => void;
 }
 
-const COLORS = ["#d97757", "#5a6b8c", "#7fae7f", "#b08cc0", "#c0a96b", "#6b9bc0"];
 
 const productColumns: Column<Overview["productTotals"][number]>[] = [
   { key: "product", label: "Product", value: (r) => r.product },

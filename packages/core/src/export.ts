@@ -1,6 +1,6 @@
 import { stringify } from "csv-stringify/sync";
 import type { AttributeMap } from "./csv.js";
-import type { GroupRow } from "./aggregate.js";
+import type { GroupDayRow, GroupRow } from "./aggregate.js";
 import type { Attributes, Dimension, UserProductRow } from "./types.js";
 
 /** Convert group aggregates into CSV text (cost rendered in dollars). */
@@ -8,7 +8,7 @@ export function groupsToCsv(groups: GroupRow[], dimension: Dimension): string {
   const rows = groups.map((g) => ({
     [dimension]: g.key,
     developers: g.developers,
-    active_user_days: g.activeUserDays,
+    active_user_days: Math.round(g.activeUserDays * 10) / 10,
     total_cost_usd: (g.costCents / 100).toFixed(2),
     avg_cost_per_developer_usd: (g.avgCostPerDeveloper / 100).toFixed(2),
     total_tokens: g.totalTokens,
@@ -22,6 +22,17 @@ export function groupsToCsv(groups: GroupRow[], dimension: Dimension): string {
     web_searches: g.webSearches,
   }));
   return stringify(rows, { header: true });
+}
+
+/** Long/tidy CSV of a group's cost over time: one row per group per day. */
+export function groupsDailyToCsv(rows: GroupDayRow[], dimension: Dimension): string {
+  const out = rows.map((r) => ({
+    [dimension]: r.key,
+    date: r.date,
+    total_cost_usd: (r.costCents / 100).toFixed(2),
+    total_tokens: r.totalTokens,
+  }));
+  return stringify(out, { header: true, columns: [dimension, "date", "total_cost_usd", "total_tokens"] });
 }
 
 export interface MemberDailyRow {

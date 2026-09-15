@@ -98,7 +98,10 @@ export function App() {
       <ControlBar status={status} from={from} to={to} onFrom={setFrom} onTo={setTo} onChanged={refreshStatus} onError={setError}>
         <FilterMenu
           dimensions={status?.dimensions ?? []}
+          timelineDimensions={status?.timelineDimensions ?? []}
           csvLoaded={status?.csvLoaded ?? false}
+          from={from}
+          to={to}
           filter={filter}
           onChange={changeFilter}
         />
@@ -121,7 +124,14 @@ export function App() {
 
       {tab === "overview" && <OverviewView from={from} to={to} filterQuery={filterQuery} onError={setError} />}
       {tab === "groups" && (
-        <GroupsView from={from} to={to} dimensions={status?.dimensions ?? []} filterQuery={filterQuery} onError={setError} />
+        <GroupsView
+          from={from}
+          to={to}
+          dimensions={status?.dimensions ?? []}
+          timelineDimensions={status?.timelineDimensions ?? []}
+          filterQuery={filterQuery}
+          onError={setError}
+        />
       )}
       {tab === "members" && <MembersView from={from} to={to} filter={filter} onError={setError} />}
     </div>

@@ -77,3 +77,10 @@ export function xAxisProps(
     tick: makeWrappedTick(maxChars, maxLines),
   };
 }
+
+/** Shared categorical palette for charts with several series/groups (e.g. cost by
+ *  product, cost by group). Colours repeat (via modulo) once a chart has more
+ *  series than the palette has entries. */
+export const COLORS = ["#d97757", "#5a6b8c", "#7fae7f", "#b08cc0", "#c0a96b", "#6b9bc0"];
+/** Colour reserved for the "grey" bucket in stacked-by-group charts (e.g. Unassigned, Other). */
+export const NEUTRAL_COLOR = "#5c6270";

@@ -5,6 +5,7 @@ export interface CliConfig {
   apiKey: string;
   dbPath: string;
   csvPath?: string;
+  projectsPath?: string;
 }
 
 export function loadConfig(): CliConfig {
@@ -13,5 +14,6 @@ export function loadConfig(): CliConfig {
     apiKey: process.env.ANTHROPIC_ANALYTICS_API_KEY ?? process.env.ANTHROPIC_ADMIN_API_KEY ?? "",
     dbPath: resolve(process.env.DB_PATH ?? "./data/analytics.db"),
     csvPath: process.env.CSV_PATH ? resolve(process.env.CSV_PATH) : undefined,
+    projectsPath: resolve(process.env.PROJECTS_PATH ?? "./config/projects.yaml"),
   };
 }

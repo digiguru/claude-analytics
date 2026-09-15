@@ -3,11 +3,24 @@
 /** Dynamic: whatever non-`email` columns the uploaded CSV carried (original casing). */
 export type Attributes = Record<string, string>;
 
+/** A timeline (Project/Team/Client) dimension, with the distinct values it can take
+ *  (for the filter menu's facet list — CSV facet values come from the user list instead). */
+export interface TimelineDimension {
+  id: string; // "@project" | "@team" | "@client"
+  label: string; // "Project" | "Team" | "Client"
+  values: string[];
+}
+
 export interface Status {
   csvLoaded: boolean;
   csvSource: string | null;
   csvRows: number;
   dimensions: string[];
+  projectsLoaded: boolean;
+  projectsSource: string | null;
+  projectCount: number;
+  projectWarnings: string[];
+  timelineDimensions: TimelineDimension[];
   cachedDateRange: { min: string; max: string } | null;
   developerCount: number;
   apiKeyConfigured: boolean;
@@ -62,10 +75,22 @@ export interface GroupRow {
   avgCostPerDeveloper: number;
   avgTokensPerDeveloper: number;
 }
+/** One group's cost/tokens on one day — feeds the Groups page's cost-over-time chart. */
+export interface GroupDayRow {
+  date: string;
+  key: string;
+  costCents: number;
+  totalTokens: number;
+}
+
 export interface GroupsResponse {
   dimension: string;
   product: string | null;
   groups: GroupRow[];
+  /** Daily cost/tokens per group key, long format. */
+  timeseries: GroupDayRow[];
+  /** Every key that appears in `groups`/`timeseries`, ordered by total cost descending. */
+  keys: string[];
   unmatchedCount: number;
 }
 
@@ -112,6 +137,10 @@ export interface MemberSummary {
 export interface UserListEntry {
   email: string;
   attributes: Attributes | null;
+  /** Timeline facet id ("@project" etc.) -> group keys this user overlapped with
+   *  in the queried range (or the whole cache). Undefined when no projects file
+   *  is loaded. See activeFacetKeysInRange in core for the "overlap" semantics. */
+  groups?: Record<string, string[]>;
 }
 
 export type Dimension = string;
@@ -144,7 +173,7 @@ export const api = {
     fetch(`/api/overview${qs({ from, to, filter })}`).then(json<Overview>),
   groups: (dimension: Dimension, from?: string, to?: string, product?: string, filter?: string) =>
     fetch(`/api/groups${qs({ groupBy: dimension, from, to, product, filter })}`).then(json<GroupsResponse>),
-  users: () => fetch("/api/users").then(json<{ users: UserListEntry[] }>),
+  users: (from?: string, to?: string) => fetch(`/api/users${qs({ from, to })}`).then(json<{ users: UserListEntry[] }>),
   member: (email: string, from?: string, to?: string) =>
     fetch(`/api/members/${encodeURIComponent(email)}${qs({ from, to })}`).then(json<MemberSummary>),
   uploadCsv: (file: File) => {
@@ -152,8 +181,17 @@ export const api = {
     form.append("file", file);
     return fetch("/api/csv", { method: "POST", body: form }).then(json<{ ok: boolean; rows: number; source: string }>);
   },
+  uploadProjects: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return fetch("/api/projects", { method: "POST", body: form }).then(
+      json<{ ok: boolean; projects: number; members: number; warnings: string[]; source: string }>,
+    );
+  },
   exportUrl: (dimension: Dimension, from?: string, to?: string, product?: string, filter?: string) =>
     `/api/export${qs({ groupBy: dimension, from, to, product, filter })}`,
+  exportGroupsDailyUrl: (dimension: Dimension, from?: string, to?: string, product?: string, filter?: string) =>
+    `/api/export/groups-daily${qs({ groupBy: dimension, from, to, product, filter })}`,
   exportMembersUrl: (from?: string, to?: string, filter?: string) =>
     `/api/export/members${qs({ from, to, filter })}`,
   exportMembersLongUrl: (from?: string, to?: string, filter?: string) =>

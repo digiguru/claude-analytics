@@ -1,0 +1,35 @@
+# Temporal project/team/client groupings — copy this file to config/projects.yaml
+# (git-ignored) and edit it with your real projects and people.
+#
+# Every project is a named bucket with an owning team and client. Members are
+# attributed to it only for the days they were assigned (start/end inclusive,
+# YYYY-MM-DD). A person on more than one project at once has their cost split
+# by "allocation" (a ratio between the concurrent projects, not an absolute
+# share) — omit it for an even split. Days with no active membership are
+# grouped as "Unassigned" so totals always reconcile with true spend.
+projects:
+  - name: Acme Rebuild
+    team: Platform
+    client: Acme
+    members:
+      - email: ada.lovelace@example.com
+        start: 2026-01-06
+        end: 2026-04-30 # blank/omitted = still on it
+      - email: alan.turing@example.com
+        start: 2026-02-01
+        allocation: 0.6 # concurrent with Globex Platform below, at 60/40
+
+  - name: Globex Platform
+    team: Platform
+    client: Globex
+    members:
+      - email: alan.turing@example.com
+        start: 2026-02-01
+        allocation: 0.4
+
+  - name: Internal Tools
+    team: Enablement
+    client: Internal
+    members:
+      - email: ada.lovelace@example.com
+        start: 2026-05-01

@@ -4,6 +4,7 @@ export * from "./db.js";
 export * from "./sync.js";
 export * from "./map.js";
 export * from "./csv.js";
+export * from "./projects.js";
 export * from "./join.js";
 export * from "./filter.js";
 export * from "./aggregate.js";

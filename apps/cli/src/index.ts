@@ -2,21 +2,29 @@
 import { Command } from "commander";
 import { writeFileSync } from "node:fs";
 import {
-  aggregateByDimension,
+  aggregateByKeyer,
   attributesFor,
   buildOverview,
   createClient,
+  csvKeyer,
   dimensionsOf,
   fetchRange,
   groupsToCsv,
   loadAttributesCsv,
+  loadProjectsYaml,
   MetricsDb,
   rankUsers,
   resolveDimension,
+  resolveTimelineDimension,
   summarizeMember,
+  timelineDimensionId,
+  timelineKeyer,
+  TIMELINE_DIMENSION_LABELS,
+  TIMELINE_FACETS,
   type AttributeMap,
   type Attributes,
-  type Dimension,
+  type MembershipIndex,
+  type RowKeyer,
 } from "@claude-analytics/core";
 import { loadConfig } from "./config.js";
 
@@ -74,19 +82,40 @@ const attrLabel = (a: Attributes | null): string => {
   return vals.length ? vals.slice(0, 3).join(" · ") : "no attributes";
 };
 
-/** Resolve --group-by against the columns actually present in the CSV, or exit. */
-function resolveDim(attributes: AttributeMap, value: string): Dimension {
+/** Load the projects/teams YAML, or an empty index when none is configured. */
+function loadProjectsOptional(override?: string): MembershipIndex {
+  const path = override ?? loadConfig().projectsPath;
+  if (!path) return new Map();
+  try {
+    return loadProjectsYaml(path).index;
+  } catch {
+    return new Map();
+  }
+}
+
+interface GroupSelector {
+  id: string;
+  keyer: RowKeyer;
+}
+
+/** Resolve --group-by against the timeline facets (@project/@team/@client) first,
+ *  then the columns actually present in the CSV, or exit. */
+function resolveGroupBy(attributes: AttributeMap, memberships: MembershipIndex, value: string): GroupSelector {
+  const facet = resolveTimelineDimension(value);
+  if (facet) return { id: timelineDimensionId(facet), keyer: timelineKeyer(memberships, facet) };
+
   const dims = dimensionsOf(attributes);
-  if (dims.length === 0) {
-    console.error("No CSV attributes loaded. Pass --csv <path> or set CSV_PATH in .env.");
-    process.exit(1);
-  }
   const dim = resolveDimension(attributes, value);
-  if (!dim) {
-    console.error(`Invalid --group-by "${value}". Available columns: ${dims.join(", ")}.`);
-    process.exit(1);
+  if (dim) return { id: dim, keyer: csvKeyer(attributes, dim) };
+
+  const timelineIds = TIMELINE_FACETS.map(timelineDimensionId);
+  const available = [...timelineIds, ...dims];
+  if (available.length === 0) {
+    console.error("No CSV attributes or projects file loaded. Pass --csv/--projects or set CSV_PATH/PROJECTS_PATH in .env.");
+  } else {
+    console.error(`Invalid --group-by "${value}". Available: ${available.join(", ")}.`);
   }
-  return dim;
+  process.exit(1);
 }
 
 program
@@ -181,54 +210,64 @@ program
 
 program
   .command("columns")
-  .description("List the columns (dimensions) available to group by in the CSV.")
+  .description("List the columns (dimensions) available to group by (CSV columns + timeline facets).")
   .option("--csv <path>", "attributes CSV (overrides CSV_PATH)")
-  .action((opts: { csv?: string }) => {
-    const attributes = loadCsv(opts.csv);
+  .option("--projects <path>", "projects YAML (overrides PROJECTS_PATH)")
+  .action((opts: { csv?: string; projects?: string }) => {
+    const attributes = loadCsvOptional(opts.csv);
+    const memberships = loadProjectsOptional(opts.projects);
     const dims = dimensionsOf(attributes);
-    if (dims.length === 0) {
-      console.log("No CSV attributes loaded. Pass --csv <path> or set CSV_PATH in .env.");
+    if (memberships.size) {
+      console.log("\nTimeline (from your projects file):\n");
+      for (const facet of TIMELINE_FACETS) console.log(`  - ${timelineDimensionId(facet)}  (${TIMELINE_DIMENSION_LABELS[facet]})`);
+    }
+    if (dims.length === 0 && memberships.size === 0) {
+      console.log("No CSV attributes or projects file loaded. Pass --csv/--projects or set CSV_PATH/PROJECTS_PATH in .env.");
       return;
     }
-    console.log(`\n${attributes.size} developer row(s). Group by any of:\n`);
-    for (const d of dims) console.log(`  - ${d}`);
-    console.log(`\ne.g. npm run cli -- group --group-by ${dims[0]}`);
+    if (dims.length) {
+      console.log(`\n${attributes.size} developer row(s). Group by any CSV column:\n`);
+      for (const d of dims) console.log(`  - ${d}`);
+    }
+    const example = memberships.size ? timelineDimensionId("project") : dims[0];
+    console.log(`\ne.g. npm run cli -- group --group-by ${example}`);
   });
 
 program
   .command("group")
-  .description("Aggregate usage/cost/activity by any CSV column (run 'columns' to list them).")
-  .requiredOption("--group-by <dimension>", "any column in your CSV (e.g. Level, BU, Role)")
+  .description("Aggregate usage/cost/activity by any CSV column or timeline facet (run 'columns' to list them).")
+  .requiredOption("--group-by <dimension>", "a CSV column, or @project/@team/@client")
   .option("--from <date>")
   .option("--to <date>")
   .option("--product <product>", "restrict cost/tokens to one product")
   .option("--csv <path>", "attributes CSV (overrides CSV_PATH)")
-  .action((opts: { groupBy: string; from?: string; to?: string; product?: string; csv?: string }) => {
+  .option("--projects <path>", "projects YAML (overrides PROJECTS_PATH)")
+  .action((opts: { groupBy: string; from?: string; to?: string; product?: string; csv?: string; projects?: string }) => {
     const db = openDb();
     try {
-      const attributes = loadCsv(opts.csv);
-      const dimension = resolveDim(attributes, opts.groupBy);
-      const groups = aggregateByDimension(
+      const attributes = loadCsvOptional(opts.csv);
+      const memberships = loadProjectsOptional(opts.projects);
+      const selector = resolveGroupBy(attributes, memberships, opts.groupBy);
+      const groups = aggregateByKeyer(
         db.getUserProducts({ from: opts.from, to: opts.to }),
         db.getUserDays({ from: opts.from, to: opts.to }),
-        attributes,
-        dimension,
+        selector.keyer,
         opts.product,
       );
-      console.log(`\nUsage by ${dimension}${opts.product ? ` (product: ${opts.product})` : ""}:\n`);
+      console.log(`\nUsage by ${selector.id}${opts.product ? ` (product: ${opts.product})` : ""}:\n`);
       console.table(
         groups.map((g) => ({
-          [dimension]: g.key,
+          [selector.id]: g.key,
           devs: g.developers,
-          "active days": g.activeUserDays,
+          "active days": g.activeUserDays.toFixed(1),
           cost: usd(g.costCents),
           "$/dev": usd(g.avgCostPerDeveloper),
           tokens: tk(g.totalTokens),
           "tok/dev": tk(Math.round(g.avgTokensPerDeveloper)),
-          "cc sess": g.ccSessions,
+          "cc sess": g.ccSessions.toFixed(1),
           "sess/dev": g.developers ? (g.ccSessions / g.developers).toFixed(1) : "0",
-          "chat msgs": g.chatMessages,
-          "web srch": g.webSearches,
+          "chat msgs": g.chatMessages.toFixed(1),
+          "web srch": g.webSearches.toFixed(1),
         })),
       );
     } finally {
@@ -272,28 +311,81 @@ program
 program
   .command("export")
   .description("Write a grouped view to CSV.")
-  .requiredOption("--group-by <dimension>", "any column in your CSV (e.g. Level, BU, Role)")
+  .requiredOption("--group-by <dimension>", "a CSV column, or @project/@team/@client")
   .requiredOption("--out <file>")
   .option("--from <date>")
   .option("--to <date>")
   .option("--product <product>")
   .option("--csv <path>")
-  .action((opts: { groupBy: string; out: string; from?: string; to?: string; product?: string; csv?: string }) => {
-    const db = openDb();
+  .option("--projects <path>", "projects YAML (overrides PROJECTS_PATH)")
+  .action(
+    (opts: { groupBy: string; out: string; from?: string; to?: string; product?: string; csv?: string; projects?: string }) => {
+      const db = openDb();
+      try {
+        const attributes = loadCsvOptional(opts.csv);
+        const memberships = loadProjectsOptional(opts.projects);
+        const selector = resolveGroupBy(attributes, memberships, opts.groupBy);
+        const groups = aggregateByKeyer(
+          db.getUserProducts({ from: opts.from, to: opts.to }),
+          db.getUserDays({ from: opts.from, to: opts.to }),
+          selector.keyer,
+          opts.product,
+        );
+        writeFileSync(opts.out, groupsToCsv(groups, selector.id));
+        console.log(`Wrote ${groups.length} group(s) to ${opts.out}.`);
+      } finally {
+        db.close();
+      }
+    },
+  );
+
+program
+  .command("projects")
+  .description("Load and validate the projects/teams YAML — lists every project and any warnings.")
+  .option("--projects <path>", "projects YAML (overrides PROJECTS_PATH)")
+  .action((opts: { projects?: string }) => {
+    const path = opts.projects ?? loadConfig().projectsPath;
+    if (!path) {
+      console.log("No projects file configured. Pass --projects <path> or set PROJECTS_PATH in .env.");
+      return;
+    }
+    let result;
     try {
-      const attributes = loadCsv(opts.csv);
-      const dimension = resolveDim(attributes, opts.groupBy);
-      const groups = aggregateByDimension(
-        db.getUserProducts({ from: opts.from, to: opts.to }),
-        db.getUserDays({ from: opts.from, to: opts.to }),
-        attributes,
-        dimension,
-        opts.product,
-      );
-      writeFileSync(opts.out, groupsToCsv(groups, dimension));
-      console.log(`Wrote ${groups.length} group(s) to ${opts.out}.`);
-    } finally {
-      db.close();
+      result = loadProjectsYaml(path);
+    } catch (err) {
+      console.error(`Failed to load ${path}: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    }
+    const { index, projectCount, memberCount, warnings } = result;
+    if (projectCount === 0) {
+      console.log(`No projects found in ${path}.`);
+      return;
+    }
+    // Flatten memberships back out by project for a per-project summary.
+    const byProject = new Map<string, { team: string; client: string; members: number; start: string; end: string | null }>();
+    for (const list of index.values()) {
+      for (const m of list) {
+        let p = byProject.get(m.project);
+        if (!p) byProject.set(m.project, (p = { team: m.team, client: m.client, members: 0, start: m.start, end: m.end }));
+        p.members += 1;
+        if (m.start < p.start) p.start = m.start;
+        if (p.end !== null && (m.end === null || m.end > p.end)) p.end = m.end;
+      }
+    }
+    console.log(`\n${path}: ${projectCount} project(s), ${memberCount} membership(s).\n`);
+    console.table(
+      [...byProject.entries()].map(([project, p]) => ({
+        project,
+        team: p.team,
+        client: p.client,
+        members: p.members,
+        from: p.start,
+        to: p.end ?? "(ongoing)",
+      })),
+    );
+    if (warnings.length) {
+      console.log(`\n${warnings.length} warning(s):`);
+      for (const w of warnings) console.log(`  - ${w}`);
     }
   });
 
