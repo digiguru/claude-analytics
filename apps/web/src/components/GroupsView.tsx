@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import { Bar, BarChart, CartesianGrid, LabelList, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
   api,
@@ -26,6 +26,14 @@ import {
   xAxisProps,
 } from "../charts.js";
 import { bucketByCycle, snapBand, type ChartBucket } from "../cycles.js";
+import {
+  combineSummaries,
+  dragSelectionReducer,
+  initialDragSelectionState,
+  liveIndexRanges,
+  resolveRanges,
+  summarizeRows,
+} from "../dragSelection.js";
 import { bucketSeries, type Granularity } from "../series.js";
 import { useUrlParam } from "../url.js";
 import { buildFacets, EMAIL_FACET, isolateValue, mergeFilterSpecs, type FilterSpec } from "../filters.js";
@@ -422,150 +430,57 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
   // day/week/month bar chart — VariableWidthBars/cycle view isn't wired up).
   // A plain drag/click replaces the current selection with one region; holding
   // Shift while dragging/clicking instead adds a new, possibly non-contiguous,
-  // region alongside whatever's already selected.
-  interface DragRegion {
-    x1: string;
-    x2: string;
-  }
-  interface IndexRange {
-    lo: number;
-    hi: number;
-  }
-  const [regions, setRegions] = useState<DragRegion[]>([]);
-  const [activeDrag, setActiveDrag] = useState<{ start: string; end: string; add: boolean } | null>(null);
+  // region alongside whatever's already selected. The index arithmetic lives
+  // in dragSelection.ts (pure, unit-tested there); this component only
+  // resolves it against the chart's own rows/labels for rendering. Driven by
+  // a reducer rather than nested setState calls — see #23 item 1, whose bug
+  // (a setRegions call nested inside a setActiveDrag updater) is what this
+  // replaces.
+  const [dragState, dispatchDrag] = useReducer(dragSelectionReducer, initialDragSelectionState);
+  const { regions, activeDrag } = dragState;
 
   useEffect(() => {
-    setRegions([]);
-    setActiveDrag(null);
+    dispatchDrag({ type: "reset" });
   }, [bucket, dimension, data]);
 
-  const toIndexRange = useCallback(
-    (r: DragRegion): IndexRange | null => {
-      const i1 = chartLabels.indexOf(r.x1);
-      const i2 = chartLabels.indexOf(r.x2);
-      if (i1 === -1 || i2 === -1) return null;
-      return { lo: Math.min(i1, i2), hi: Math.max(i1, i2) };
-    },
-    [chartLabels],
+  const liveRanges = useMemo(
+    () => liveIndexRanges(chartLabels, regions, activeDrag),
+    [chartLabels, regions, activeDrag],
   );
-
-  // Regions never overlap. Clip a candidate additive range to the free run of
-  // indices reachable from `anchor` (the index the drag/click started on) —
-  // truncating at the nearest already-selected region on either side. Returns
-  // null when the anchor itself sits inside an existing region (nothing to add)
-  // or the whole range gets clipped away.
-  const clipAroundAnchor = useCallback((anchor: number, other: number, existing: IndexRange[]): IndexRange | null => {
-    if (existing.some((r) => anchor >= r.lo && anchor <= r.hi)) return null;
-    let lo = Math.min(anchor, other);
-    let hi = Math.max(anchor, other);
-    for (const r of existing) {
-      if (r.hi < anchor) lo = Math.max(lo, r.hi + 1);
-      if (r.lo > anchor) hi = Math.min(hi, r.lo - 1);
-    }
-    return lo <= hi ? { lo, hi } : null;
-  }, []);
 
   // Committed regions plus whatever's currently being dragged (already clipped
   // so the live preview never overlaps a committed region), each resolved to a
   // label range and its rows — this is what's drawn/summarized.
-  const liveRegions = useMemo(() => {
-    const committed = regions.map(toIndexRange).filter((r): r is IndexRange => r !== null);
-    const ranges = [...committed];
-    if (activeDrag) {
-      const startIdx = chartLabels.indexOf(activeDrag.start);
-      const endIdx = chartLabels.indexOf(activeDrag.end);
-      if (startIdx !== -1 && endIdx !== -1) {
-        if (activeDrag.add) {
-          const clipped = clipAroundAnchor(startIdx, endIdx, committed);
-          if (clipped) ranges.push(clipped);
-        } else {
-          // Replace mode: the drag isn't constrained by regions it's about to wipe out.
-          ranges.length = 0;
-          ranges.push({ lo: Math.min(startIdx, endIdx), hi: Math.max(startIdx, endIdx) });
-        }
-      }
-    }
-    return ranges.map((r) => ({
-      x1: chartLabels[r.lo]!,
-      x2: chartLabels[r.hi]!,
-      rows: stacked.rows.slice(r.lo, r.hi + 1),
-    }));
-  }, [regions, activeDrag, chartLabels, stacked.rows, toIndexRange, clipAroundAnchor]);
+  const liveRegions = useMemo(
+    () =>
+      resolveRanges(chartLabels, liveRanges).map((r, i) => ({
+        ...r,
+        rows: stacked.rows.slice(liveRanges[i]!.lo, liveRanges[i]!.hi + 1),
+      })),
+    [chartLabels, liveRanges, stacked.rows],
+  );
 
   const regionSummaries = useMemo(
-    () =>
-      liveRegions.map((r) => {
-        const byKey = new Map<string, number>();
-        let total = 0;
-        for (const row of r.rows) {
-          for (const key of stacked.keys) {
-            const v = Number(row[key]) || 0;
-            if (v) byKey.set(key, (byKey.get(key) ?? 0) + v);
-            total += v;
-          }
-        }
-        return { total, byKey, x1: r.x1, x2: r.x2 };
-      }),
+    () => liveRegions.map((r) => ({ ...summarizeRows(r.rows, stacked.keys), x1: r.x1, x2: r.x2 })),
     [liveRegions, stacked.keys],
   );
 
   // Combined across every selected region, and across the whole chart
   // regardless of selection — shown together at the top of the section.
-  const combinedRegionSummary = useMemo(() => {
-    if (regionSummaries.length === 0) return null;
-    const byKey = new Map<string, number>();
-    let total = 0;
-    for (const s of regionSummaries) {
-      total += s.total;
-      for (const [k, v] of s.byKey) byKey.set(k, (byKey.get(k) ?? 0) + v);
-    }
-    return { total, byKey };
-  }, [regionSummaries]);
+  const combinedRegionSummary = useMemo(() => combineSummaries(regionSummaries), [regionSummaries]);
 
-  const overallSummary = useMemo(() => {
-    const byKey = new Map<string, number>();
-    let total = 0;
-    for (const row of stacked.rows) {
-      for (const key of stacked.keys) {
-        const v = Number(row[key]) || 0;
-        if (v) byKey.set(key, (byKey.get(key) ?? 0) + v);
-        total += v;
-      }
-    }
-    return { total, byKey };
-  }, [stacked.rows, stacked.keys]);
+  const overallSummary = useMemo(() => summarizeRows(stacked.rows, stacked.keys), [stacked.rows, stacked.keys]);
 
   const handleChartMouseDown = (e: { activeLabel?: string | number }, event: { shiftKey?: boolean }) => {
     if (e?.activeLabel == null) return;
-    const label = String(e.activeLabel);
-    setActiveDrag({ start: label, end: label, add: Boolean(event?.shiftKey) });
+    dispatchDrag({ type: "start", label: String(e.activeLabel), add: Boolean(event?.shiftKey) });
   };
   const handleChartMouseMove = (e: { activeLabel?: string | number }) => {
-    if (activeDrag && e?.activeLabel != null) setActiveDrag({ ...activeDrag, end: String(e.activeLabel) });
+    if (activeDrag && e?.activeLabel != null) dispatchDrag({ type: "move", label: String(e.activeLabel) });
   };
-  const commitDrag = () => {
-    setActiveDrag((cur) => {
-      if (!cur) return null;
-      const startIdx = chartLabels.indexOf(cur.start);
-      const endIdx = chartLabels.indexOf(cur.end);
-      if (startIdx === -1 || endIdx === -1) return null;
-      setRegions((rs) => {
-        if (!cur.add) {
-          return [{ x1: chartLabels[Math.min(startIdx, endIdx)]!, x2: chartLabels[Math.max(startIdx, endIdx)]! }];
-        }
-        const existing = rs.map(toIndexRange).filter((r): r is IndexRange => r !== null);
-        const clipped = clipAroundAnchor(startIdx, endIdx, existing);
-        if (!clipped) return rs;
-        return [...rs, { x1: chartLabels[clipped.lo]!, x2: chartLabels[clipped.hi]! }];
-      });
-      return null;
-    });
-  };
-  const removeRegion = (index: number) => setRegions((rs) => rs.filter((_, i) => i !== index));
-  const clearSelection = () => {
-    setRegions([]);
-    setActiveDrag(null);
-  };
+  const commitDrag = () => dispatchDrag({ type: "commit", labels: chartLabels });
+  const removeRegion = (index: number) => dispatchDrag({ type: "remove", index });
+  const clearSelection = () => dispatchDrag({ type: "clear" });
 
   return (
     <div className="panel">

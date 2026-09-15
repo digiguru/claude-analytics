@@ -24,7 +24,9 @@ export function setParam(key: string, value: string | null | undefined, replace 
 
 function writeParams(params: URLSearchParams, replace: boolean): void {
   const qs = params.toString();
-  const url = qs ? `?${qs}` : window.location.pathname;
+  // Preserve any #hash — clearing the last query param used to fall back to
+  // window.location.pathname alone, silently dropping it. See #30 item 9.
+  const url = (qs ? `?${qs}` : window.location.pathname) + window.location.hash;
   if (replace) window.history.replaceState(null, "", url);
   else window.history.pushState(null, "", url);
   notify();

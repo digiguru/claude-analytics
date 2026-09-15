@@ -1,10 +1,20 @@
 import { test, expect } from "vitest";
 import {
+  BLANK_KEY,
+  buildFacets,
   EMAIL_FACET,
+  filterToQuery,
   hiddenCount,
+  isEmptyFilter,
+  isolateValue,
+  mergeFilterSpecs,
   parseFilterSpec,
   parseFilterSpecJSON,
+  setFacetAll,
+  toggleValue,
+  UNMATCHED_KEY,
   userPasses,
+  valueFor,
   type FilterSpec,
 } from "./filters.js";
 import type { UserListEntry } from "./api.js";
@@ -80,4 +90,104 @@ test("userPasses: EMAIL_FACET hide still works with a proper array", () => {
   const spec: FilterSpec = { hidden: { [EMAIL_FACET]: ["a@x.com"] } };
   expect(userPasses(spec, user("a@x.com"))).toBe(false);
   expect(userPasses(spec, user("b@x.com"))).toBe(true);
+});
+
+test("userPasses: an @-facet (timeline) hide only excludes a user when EVERY overlapping group is hidden", () => {
+  const spec: FilterSpec = { hidden: { "@project": ["Acme"] } };
+  const soleGroup: UserListEntry = { email: "a@x.com", attributes: {}, groups: { "@project": ["Acme"] } };
+  const splitGroups: UserListEntry = { email: "b@x.com", attributes: {}, groups: { "@project": ["Acme", "Globex"] } };
+  expect(userPasses(spec, soleGroup)).toBe(false); // only group is hidden -> excluded
+  expect(userPasses(spec, splitGroups)).toBe(true); // still has a visible group -> included
+});
+
+// ---- isEmptyFilter ----
+
+test("isEmptyFilter: null/undefined and an all-empty hidden map are empty", () => {
+  expect(isEmptyFilter(null)).toBe(true);
+  expect(isEmptyFilter(undefined)).toBe(true);
+  expect(isEmptyFilter({ hidden: {} })).toBe(true);
+  expect(isEmptyFilter({ hidden: { Team: [] } })).toBe(true);
+});
+
+test("isEmptyFilter: any non-empty hidden array makes it non-empty", () => {
+  expect(isEmptyFilter({ hidden: { Team: ["Platform"] } })).toBe(false);
+});
+
+// ---- valueFor ----
+
+test("valueFor: no attributes at all -> UNMATCHED_KEY", () => {
+  expect(valueFor(null, "Level")).toBe(UNMATCHED_KEY);
+});
+
+test("valueFor: an exact-case column match", () => {
+  expect(valueFor({ Level: "Senior" }, "Level")).toBe("Senior");
+});
+
+test("valueFor: case-insensitive column match when exact case is absent", () => {
+  expect(valueFor({ level: "Senior" }, "Level")).toBe("Senior");
+});
+
+test("valueFor: an empty value for a present column -> BLANK_KEY", () => {
+  expect(valueFor({ Level: "" }, "Level")).toBe(BLANK_KEY);
+});
+
+test("valueFor: the column doesn't exist at all -> BLANK_KEY", () => {
+  expect(valueFor({ Other: "x" }, "Level")).toBe(BLANK_KEY);
+});
+
+// ---- buildFacets ----
+
+test("buildFacets: builds one facet per CSV dimension plus timeline and Member facets", () => {
+  const users: UserListEntry[] = [
+    { email: "b@x.com", attributes: { Level: "Senior" } },
+    { email: "a@x.com", attributes: { Level: "Junior" } },
+  ];
+  const facets = buildFacets(users, ["Level"], [{ id: "@project", label: "Project", values: ["Acme", "Unassigned"] }]);
+  const byKey = new Map(facets.map((f) => [f.key, f]));
+  expect(byKey.get("Level")!.values).toEqual(["Junior", "Senior"]); // sorted
+  expect(byKey.get("@project")!.values).toEqual(["Acme", "Unassigned"]); // passed through as-is
+  expect(byKey.get(EMAIL_FACET)!.values).toEqual(["a@x.com", "b@x.com"]); // sorted
+});
+
+// ---- toggleValue / setFacetAll / isolateValue / mergeFilterSpecs / filterToQuery ----
+
+test("toggleValue: adds a value to hidden, then removes it again", () => {
+  let spec: FilterSpec = { hidden: {} };
+  spec = toggleValue(spec, "Team", "Platform");
+  expect(spec.hidden.Team).toEqual(["Platform"]);
+  spec = toggleValue(spec, "Team", "Platform");
+  expect(spec.hidden.Team).toBeUndefined(); // facet key removed once empty, not left as []
+});
+
+test("setFacetAll: hides every given value, or clears the facet entirely", () => {
+  let spec: FilterSpec = { hidden: {} };
+  spec = setFacetAll(spec, "Team", ["Platform", "Enablement"], true);
+  expect(spec.hidden.Team).toEqual(["Platform", "Enablement"]);
+  spec = setFacetAll(spec, "Team", ["Platform", "Enablement"], false);
+  expect(spec.hidden.Team).toBeUndefined();
+});
+
+test("isolateValue: hides every value in the facet except the one given", () => {
+  const spec = isolateValue("Team", ["Platform", "Enablement", "Growth"], "Enablement");
+  expect(new Set(spec.hidden.Team)).toEqual(new Set(["Platform", "Growth"]));
+});
+
+test("mergeFilterSpecs: unions hidden arrays per facet, de-duplicated", () => {
+  const a: FilterSpec = { hidden: { Team: ["Platform"] } };
+  const b: FilterSpec = { hidden: { Team: ["Platform", "Enablement"], Level: ["Junior"] } };
+  const merged = mergeFilterSpecs(a, b)!;
+  expect(new Set(merged.hidden.Team)).toEqual(new Set(["Platform", "Enablement"]));
+  expect(merged.hidden.Level).toEqual(["Junior"]);
+});
+
+test("mergeFilterSpecs: an empty side just returns the other side unchanged", () => {
+  const a: FilterSpec = { hidden: { Team: ["Platform"] } };
+  expect(mergeFilterSpecs(a, null)).toBe(a);
+  expect(mergeFilterSpecs(null, a)).toBe(a);
+  expect(mergeFilterSpecs(null, null)).toBe(null);
+});
+
+test("filterToQuery: undefined for an empty filter, JSON otherwise", () => {
+  expect(filterToQuery({ hidden: {} })).toBeUndefined();
+  expect(filterToQuery({ hidden: { Team: ["Platform"] } })).toBe('{"hidden":{"Team":["Platform"]}}');
 });
