@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 export interface Column<T> {
   key: string;
@@ -19,12 +19,19 @@ export function SortableTable<T>({ columns, rows, initialSort, initialDesc = tru
   const [sortKey, setSortKey] = useState(initialSort ?? columns[0]?.key ?? "");
   const [desc, setDesc] = useState(initialDesc);
 
-  // Follow the caller's sort when it changes (e.g. the Groups page sort-order control),
-  // while still allowing the user to re-sort by clicking column headers afterwards.
-  useEffect(() => {
+  // Follow the caller's sort when it changes (e.g. the Groups page sort-order
+  // control), while still allowing the user to re-sort by clicking column
+  // headers afterwards. Adjusted during render (comparing against the last
+  // props seen) rather than in an effect — an effect here would apply the
+  // new sort one render late, and calling setState synchronously inside an
+  // effect body is itself flagged by react-hooks/set-state-in-effect. See
+  // https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes.
+  const [prevProps, setPrevProps] = useState({ initialSort, initialDesc });
+  if (prevProps.initialSort !== initialSort || prevProps.initialDesc !== initialDesc) {
+    setPrevProps({ initialSort, initialDesc });
     if (initialSort) setSortKey(initialSort);
     setDesc(initialDesc);
-  }, [initialSort, initialDesc]);
+  }
 
   const col = columns.find((c) => c.key === sortKey);
   const sorted = [...rows].sort((a, b) => {

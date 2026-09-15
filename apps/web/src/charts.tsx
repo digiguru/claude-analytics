@@ -1,14 +1,4 @@
 // Shared chart helpers.
-import type { ComponentProps, ComponentType } from "react";
-import { ReferenceArea } from "recharts";
-
-/** recharts@3's ReferenceArea prop type resolves almost all SVG props (fill,
- *  stroke, even style) out of its public type, so cast once here rather than
- *  at every call site. */
-export const RechartsReferenceArea = ReferenceArea as ComponentType<
-  ComponentProps<typeof ReferenceArea> & Record<string, unknown>
->;
-
 const TICK_FILL = "#9aa3b2";
 const TICK_FONT = 11;
 const LINE_HEIGHT = 12;

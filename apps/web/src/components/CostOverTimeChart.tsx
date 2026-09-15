@@ -1,12 +1,7 @@
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { usd, type ProjectCycles } from "../api.js";
-import {
-  CHART_MARGIN,
-  RechartsReferenceArea as ReferenceArea,
-  Y_AXIS_WIDTH,
-  wrapLabel,
-  xAxisProps,
-} from "../charts.js";
+import { CHART_MARGIN, Y_AXIS_WIDTH, wrapLabel, xAxisProps } from "../charts.js";
+import { RechartsReferenceArea as ReferenceArea } from "../RechartsReferenceArea.js";
 import { snapBand, type ChartBucket } from "../cycles.js";
 import type { ActiveDrag, DragRegion } from "../dragSelection.js";
 import type { Granularity } from "../series.js";
