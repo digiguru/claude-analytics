@@ -37,6 +37,31 @@ function loadIndex() {
 
 const DATE = "2026-04-01"; // inside both memberships' window
 
+// Two concurrent projects on DIFFERENT teams, 50/50 — the #20 scenario: a
+// checkbox UI makes it natural to hide a project AND that project's own team,
+// expressing one intent ("exclude the Globex work") in two correlated places.
+const YAML_DIFFERENT_TEAMS = `
+projects:
+  - name: Acme
+    team: Alpha
+    members:
+      - email: a@x.com
+        start: 2026-03-01
+        end: 2026-06-30
+        allocation: 0.5
+  - name: Globex
+    team: Beta
+    members:
+      - email: a@x.com
+        start: 2026-03-01
+        end: 2026-06-30
+        allocation: 0.5
+`;
+
+function loadDifferentTeamsIndex() {
+  return parseProjectsYaml(YAML_DIFFERENT_TEAMS).index;
+}
+
 test("mergeFilterSpecs: empty + empty = empty", () => {
   expect(mergeFilterSpecs(null, null)).toBe(null);
 });
@@ -129,4 +154,38 @@ test("makeRowWeight: no timeline facet hidden returns a constant 1", () => {
   const index = loadIndex();
   const weightOf = makeRowWeight(index, { hidden: { Level: ["Junior"] } });
   expect(weightOf("a@x.com", DATE)).toBe(1);
+});
+
+// #20: hiding a project and its own team is one intent expressed twice, not
+// two independent 50% discounts.
+test("makeRowWeight: hiding a project and its own team doesn't double-discount (correlated hides)", () => {
+  const index = loadDifferentTeamsIndex();
+  const weightOf = makeRowWeight(index, { hidden: { "@project": ["Globex"], "@team": ["Beta"] } });
+  expect(weightOf("a@x.com", DATE)).toBe(0.5); // Acme's real 50% share, not 0.5*0.5 = 0.25
+});
+
+test("makeRowWeight: hiding a project and an UNRELATED team still composes as independent discounts", () => {
+  const index = loadDifferentTeamsIndex();
+  // "Gamma" isn't either project's team here, so it excludes nothing extra —
+  // the combined kept fraction is still just Acme's real share.
+  const weightOf = makeRowWeight(index, { hidden: { "@project": ["Globex"], "@team": ["Gamma"] } });
+  expect(weightOf("a@x.com", DATE)).toBe(0.5);
+});
+
+test("applyTimelineFilterToKeyer: hiding a project and its own team doesn't double-discount when grouping by an unrelated CSV facet", () => {
+  const index = loadDifferentTeamsIndex();
+  const attrs = new Map([["a@x.com", { Level: "Senior" }]]);
+  const keyer: RowKeyer = csvKeyer(attrs, "Level");
+  const spec: FilterSpec = { hidden: { "@project": ["Globex"], "@team": ["Beta"] } };
+  const wrapped = applyTimelineFilterToKeyer(keyer, "Level", index, spec);
+  expect(wrapped("a@x.com", DATE)).toEqual([{ key: "Senior", weight: 0.5 }]); // not 0.25
+});
+
+test("applyTimelineFilterToKeyer: hiding a project's own team correctly excludes only that project when grouping by project", () => {
+  const index = loadDifferentTeamsIndex();
+  const keyer: RowKeyer = timelineKeyer(index, "project");
+  // Hide team Beta (Globex's team) while grouping by project: only Globex's
+  // share should drop out, not a uniform scale applied to every project.
+  const wrapped = applyTimelineFilterToKeyer(keyer, "@project", index, { hidden: { "@team": ["Beta"] } });
+  expect(wrapped("a@x.com", DATE)).toEqual([{ key: "Acme", weight: 0.5 }]);
 });
