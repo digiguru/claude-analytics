@@ -8,7 +8,7 @@ Start to finish, from a fresh checkout to a running app. Should take about five 
 
 ### Prerequisites
 
-- **Node.js 20 or newer** (`node --version`). If you don't have it, install via [nvm](https://github.com/nvm-sh/nvm) (`nvm install 20`) or from [nodejs.org](https://nodejs.org).
+- **Node.js 22.12 or newer** (`node --version`). If you don't have it, install via [nvm](https://github.com/nvm-sh/nvm) (`nvm install 22`) or from [nodejs.org](https://nodejs.org).
 - Git, and read access to this repo.
 
 ### 1. Get the code and install

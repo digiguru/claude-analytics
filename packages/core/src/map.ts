@@ -13,6 +13,9 @@ import type {
 
 export const MIN_DATE = "2026-01-01";
 
+/** Bucket for cost/usage rows whose actor has no email (e.g. a deleted or service actor). */
+export const NO_EMAIL_KEY = "(no email)";
+
 export function toUtcDay(value: string): string {
   return value.slice(0, 10);
 }
@@ -21,10 +24,31 @@ export function normalizeProduct(p: string | null | undefined): string {
   return p && p.length > 0 ? p : "other";
 }
 
+const CENTS_PATTERN = /^-?\d+(\.\d+)?$/;
+
+/**
+ * Parse the API's fractional-cents decimal string into a number of cents, and
+ * report whether the input was actually a well-formed decimal amount. A
+ * malformed amount (non-numeric, trailing garbage, null/undefined) is never
+ * silently accepted — it's reported as unparseable via `ok: false` alongside
+ * the `0` fallback, so callers can count and surface the rejection.
+ */
+export function parseCentsChecked(amount: string | null | undefined): { cents: number; ok: boolean } {
+  if (typeof amount !== "string") return { cents: 0, ok: false };
+  const trimmed = amount.trim();
+  if (!CENTS_PATTERN.test(trimmed)) return { cents: 0, ok: false };
+  const n = Number.parseFloat(trimmed);
+  return Number.isFinite(n) ? { cents: n, ok: true } : { cents: 0, ok: false };
+}
+
 /** Parse the API's fractional-cents decimal string into a number of cents. */
 export function parseCents(amount: string): number {
-  const n = Number.parseFloat(amount);
-  return Number.isFinite(n) ? n : 0;
+  return parseCentsChecked(amount).cents;
+}
+
+function normalizeEmail(email: string | null | undefined): string {
+  const trimmed = (email ?? "").trim().toLowerCase();
+  return trimmed || NO_EMAIL_KEY;
 }
 
 // ---- date range helpers ----
@@ -138,10 +162,17 @@ export function mapUserActivity(date: string, r: UserActivityRecord): UserDayRow
   };
 }
 
+export interface MergeResult<T> {
+  rows: T[];
+  /** Count of cost amounts that failed to parse as a decimal (see parseCentsChecked). */
+  unparseableAmounts: number;
+}
+
 /** Merge per-user cost rows + usage rows (both 1d × product) keyed by date|user|product. */
-export function mergeUserProducts(cost: UserCostRow[], usage: UserUsageRow[]): UserProductRow[] {
+export function mergeUserProducts(cost: UserCostRow[], usage: UserUsageRow[]): MergeResult<UserProductRow> {
   const map = new Map<string, UserProductRow>();
   const keyOf = (date: string, userId: string, product: string) => `${date}|${userId}|${product}`;
+  let unparseableAmounts = 0;
 
   for (const c of cost) {
     const date = toUtcDay(c.starting_at);
@@ -149,7 +180,10 @@ export function mergeUserProducts(cost: UserCostRow[], usage: UserUsageRow[]): U
     const userId = c.actor.user_id;
     const key = keyOf(date, userId, product);
     const row = map.get(key) ?? blankUserProduct(date, userId, c.actor.email, product);
-    row.costCents += parseCents(c.amount);
+    if (row.email === NO_EMAIL_KEY && c.actor.email) row.email = normalizeEmail(c.actor.email);
+    const { cents, ok } = parseCentsChecked(c.amount);
+    if (!ok) unparseableAmounts += 1;
+    row.costCents += cents;
     if (c.requests) row.requests += c.requests;
     map.set(key, row);
   }
@@ -159,13 +193,14 @@ export function mergeUserProducts(cost: UserCostRow[], usage: UserUsageRow[]): U
     const userId = u.actor.user_id;
     const key = keyOf(date, userId, product);
     const row = map.get(key) ?? blankUserProduct(date, userId, u.actor.email, product);
+    if (row.email === NO_EMAIL_KEY && u.actor.email) row.email = normalizeEmail(u.actor.email);
     row.totalTokens += u.total_tokens;
     row.inputTokens += u.uncached_input_tokens;
     row.outputTokens += u.output_tokens;
     row.cacheReadTokens += u.cache_read_input_tokens;
     map.set(key, row);
   }
-  return [...map.values()];
+  return { rows: [...map.values()], unparseableAmounts };
 }
 
 function blankUserProduct(
@@ -177,7 +212,7 @@ function blankUserProduct(
   return {
     date,
     userId,
-    email: (email ?? "").trim().toLowerCase(),
+    email: normalizeEmail(email),
     product,
     costCents: 0,
     totalTokens: 0,
@@ -192,9 +227,10 @@ function blankUserProduct(
 export function mergeOrgProducts(
   cost: { starting_at: string; results: CostResultRow[] }[],
   usage: { starting_at: string; results: UsageResultRow[] }[],
-): OrgProductRow[] {
+): MergeResult<OrgProductRow> {
   const map = new Map<string, OrgProductRow>();
   const keyOf = (date: string, product: string) => `${date}|${product}`;
+  let unparseableAmounts = 0;
 
   for (const bucket of cost) {
     const date = toUtcDay(bucket.starting_at);
@@ -202,7 +238,9 @@ export function mergeOrgProducts(
       const product = normalizeProduct(r.product);
       const key = keyOf(date, product);
       const row = map.get(key) ?? blankOrgProduct(date, product);
-      row.costCents += parseCents(r.amount);
+      const { cents, ok } = parseCentsChecked(r.amount);
+      if (!ok) unparseableAmounts += 1;
+      row.costCents += cents;
       if (r.requests) row.requests += r.requests;
       map.set(key, row);
     }
@@ -213,13 +251,19 @@ export function mergeOrgProducts(
       const product = normalizeProduct(r.product);
       const key = keyOf(date, product);
       const row = map.get(key) ?? blankOrgProduct(date, product);
-      row.totalTokens += r.uncached_input_tokens + r.output_tokens + r.cache_read_input_tokens;
+      row.totalTokens +=
+        r.uncached_input_tokens +
+        r.output_tokens +
+        r.cache_read_input_tokens +
+        r.cache_creation.ephemeral_1h_input_tokens +
+        r.cache_creation.ephemeral_5m_input_tokens;
       row.inputTokens += r.uncached_input_tokens;
       row.outputTokens += r.output_tokens;
+      row.cacheReadTokens += r.cache_read_input_tokens;
       map.set(key, row);
     }
   }
-  return [...map.values()];
+  return { rows: [...map.values()], unparseableAmounts };
 }
 
 function blankOrgProduct(date: string, product: string): OrgProductRow {
@@ -228,6 +272,7 @@ function blankOrgProduct(date: string, product: string): OrgProductRow {
     product,
     costCents: 0,
     totalTokens: 0,
+    cacheReadTokens: 0,
     inputTokens: 0,
     outputTokens: 0,
     requests: 0,
