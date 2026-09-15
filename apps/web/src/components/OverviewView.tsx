@@ -8,12 +8,8 @@ import { SortableTable, type Column } from "./SortableTable.js";
 // Both charts come from the same module, so they share one chunk and one
 // fetch — recharts stays off the initial bundle even though Overview is the
 // eagerly-imported default tab. See OverviewCharts.tsx.
-const CostAndUsersChart = lazy(() =>
-  import("./OverviewCharts.js").then((m) => ({ default: m.CostAndUsersChart })),
-);
-const CostByProductChart = lazy(() =>
-  import("./OverviewCharts.js").then((m) => ({ default: m.CostByProductChart })),
-);
+const CostAndUsersChart = lazy(() => import("./OverviewCharts.js").then((m) => ({ default: m.CostAndUsersChart })));
+const CostByProductChart = lazy(() => import("./OverviewCharts.js").then((m) => ({ default: m.CostByProductChart })));
 
 interface Props {
   from: string;
