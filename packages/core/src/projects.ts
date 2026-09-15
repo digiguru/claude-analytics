@@ -39,6 +39,12 @@ export function timelineDimensionId(facet: TimelineFacet): string {
   return TIMELINE_DIMENSION_IDS[facet];
 }
 
+/** Reserved Group By id for grouping by a project's own cycles — only
+ *  resolvable when exactly one project is in scope (cycles are per-project;
+ *  see cycleKeyer in aggregate.ts and how the server resolves it). */
+export const CYCLE_DIMENSION_ID = "@cycle";
+export const CYCLE_DIMENSION_LABEL = "Cycle";
+
 /** One person's window on one project, flattened out of the YAML's nested shape. */
 export interface Membership {
   project: string;

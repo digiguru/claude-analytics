@@ -4,11 +4,12 @@ import {
   aggregateByKeyer,
   combineKeyers,
   csvKeyer,
+  cycleKeyer,
   memberKeyer,
   splitCombinedKey,
   timelineKeyer,
 } from "./aggregate.js";
-import { parseProjectsYaml } from "./projects.js";
+import { cyclesFor, NO_CYCLE_KEY, parseProjectsYaml } from "./projects.js";
 import type { UserDayRow, UserProductRow } from "./types.js";
 
 function product(email: string, date: string, costCents: number): UserProductRow {
@@ -89,4 +90,33 @@ projects:
   assert.equal(byKey.get(`Acme${SEP}ann@x.com`), 60);
   assert.equal(byKey.get(`Globex${SEP}ann@x.com`), 40);
   assert.equal(nested.length, 2);
+});
+
+test("cycleKeyer: groups a project's cost by which of its own cycles each day falls in", () => {
+  const yaml = `
+projects:
+  - name: Acme
+    cycles:
+      - name: Discovery
+        start: 2026-06-01
+      - name: Build
+        start: 2026-06-04
+    members:
+      - email: ann@x.com
+        start: 2026-06-01
+`;
+  const { cycles } = parseProjectsYaml(yaml);
+  const rows: UserProductRow[] = [
+    product("ann@x.com", "2026-06-01", 100), // Discovery
+    product("ann@x.com", "2026-06-03", 50), // Discovery (derived end, day before Build)
+    product("ann@x.com", "2026-06-04", 30), // Build
+    product("ann@x.com", "2026-05-20", 10), // before any cycle -> NO_CYCLE_KEY
+  ];
+
+  const keyer = cycleKeyer(cyclesFor(cycles, "Acme"));
+  const groups = aggregateByKeyer(rows, emptyDays, keyer);
+  const byKey = new Map(groups.map((g) => [g.key, g.costCents]));
+  assert.equal(byKey.get("Discovery"), 150);
+  assert.equal(byKey.get("Build"), 30);
+  assert.equal(byKey.get(NO_CYCLE_KEY), 10);
 });

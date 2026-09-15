@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Legend, ReferenceArea, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
   api,
+  CYCLE_DIMENSION_ID,
+  CYCLE_DIMENSION_LABEL,
   MEMBER_DIMENSION_ID,
   MEMBER_DIMENSION_LABEL,
   PRODUCTS,
@@ -204,21 +206,15 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
   // Human label for "Stacking by", for the totals chart's title.
   const dimensionLabel =
     timelineDimensions.find((d) => d.id === dimension)?.label ??
-    (dimension === MEMBER_DIMENSION_ID ? MEMBER_DIMENSION_LABEL : dimension);
+    (dimension === MEMBER_DIMENSION_ID
+      ? MEMBER_DIMENSION_LABEL
+      : dimension === CYCLE_DIMENSION_ID
+        ? CYCLE_DIMENSION_LABEL
+        : dimension);
   const cyclesForProject = useCallback(
     (name: string) => projectCycles.find((p) => p.project === name)?.cycles ?? [],
     [projectCycles],
   );
-
-  // Default "Stacking by" once dimensions load (unless a URL/previous pick is still
-  // valid): prefer the first timeline facet (Project) when a projects file is
-  // loaded, else the first CSV column.
-  useEffect(() => {
-    const timelineIds = timelineDimensions.map((d) => d.id);
-    if (timelineIds.includes(dimension) || dimensions.includes(dimension)) return;
-    if (timelineIds.length) setDimension(timelineIds[0]!, true);
-    else if (dimensions.length) setDimension(dimensions[0]!, true);
-  }, [dimensions, timelineDimensions, dimension, setDimension]);
 
   const load = useCallback(async () => {
     if (!dimension) return;
@@ -258,6 +254,18 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
   const scopeIsInferred = !explicitProject && Boolean(scopeProject);
   const scopeCycles = scopeProject ? cyclesForProject(scopeProject) : [];
   const cycleAvailable = scopeCycles.length > 0;
+
+  // Default "Stacking by" once dimensions load (unless a URL/previous pick is
+  // still valid): prefer the first timeline facet (Project) when a projects
+  // file is loaded, else the first CSV column. "Cycle" only counts as valid
+  // while it's actually resolvable (cycleAvailable, just above).
+  useEffect(() => {
+    const timelineIds = timelineDimensions.map((d) => d.id);
+    const validCycle = dimension === CYCLE_DIMENSION_ID && cycleAvailable;
+    if (timelineIds.includes(dimension) || dimensions.includes(dimension) || validCycle) return;
+    if (timelineIds.length) setDimension(timelineIds[0]!, true);
+    else if (dimensions.length) setDimension(dimensions[0]!, true);
+  }, [dimensions, timelineDimensions, dimension, cycleAvailable, setDimension]);
 
   const bucket: ChartBucket = bucketRaw === "cycle" && cycleAvailable ? "cycle" : bucketRaw === "day" || bucketRaw === "month" ? bucketRaw : "week";
 
@@ -314,6 +322,7 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
                 {timelineDimensions.map((d) => (
                   <option key={d.id} value={d.id}>{d.label}</option>
                 ))}
+                {cycleAvailable && <option value={CYCLE_DIMENSION_ID}>{CYCLE_DIMENSION_LABEL}</option>}
               </optgroup>
             )}
             {dimensions.length > 0 && (

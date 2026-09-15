@@ -198,6 +198,12 @@ export const PRODUCTS = ["chat", "claude_code", "cowork", "office_agent", "claud
 export const MEMBER_DIMENSION_ID = "@member";
 export const MEMBER_DIMENSION_LABEL = "Member (email)";
 
+/** Reserved Group By id for grouping by a project's own cycles — mirrors
+ *  core's CYCLE_DIMENSION_ID. Only resolvable server-side when exactly one
+ *  project is in scope (see GroupsResponse.activeProjects). */
+export const CYCLE_DIMENSION_ID = "@cycle";
+export const CYCLE_DIMENSION_LABEL = "Cycle";
+
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };

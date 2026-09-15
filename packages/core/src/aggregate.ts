@@ -1,6 +1,6 @@
 import type { AttributeMap } from "./csv.js";
 import { groupKey } from "./join.js";
-import { membershipKeys, type MembershipIndex, type TimelineFacet } from "./projects.js";
+import { membershipKeys, NO_CYCLE_KEY, type Cycle, type MembershipIndex, type TimelineFacet } from "./projects.js";
 import type {
   Attributes,
   Dimension,
@@ -231,6 +231,22 @@ export function csvKeyer(attributes: AttributeMap, dimension: Dimension): RowKey
 /** A keyer over a timeline facet (project/team/client) — date-aware, weighted by allocation. */
 export function timelineKeyer(index: MembershipIndex, facet: TimelineFacet): RowKeyer {
   return (email, date) => membershipKeys(index, email, date, facet);
+}
+
+/**
+ * A keyer over a single project's own cycles — date-only (ignores email),
+ * weight always 1. Cycles are per-project, so this only makes sense once the
+ * caller has already resolved which one project is in scope; see
+ * CYCLE_DIMENSION_ID in projects.ts and how the server resolves it (requires
+ * exactly one active project). Days outside every cycle key to NO_CYCLE_KEY.
+ */
+export function cycleKeyer(cycles: Cycle[]): RowKeyer {
+  return (_email, date) => {
+    for (const c of cycles) {
+      if (c.start <= date && (c.end === null || date <= c.end)) return [{ key: c.name, weight: 1 }];
+    }
+    return [{ key: NO_CYCLE_KEY, weight: 1 }];
+  };
 }
 
 /** Reserved Group By id for grouping by raw member email — works as a primary
