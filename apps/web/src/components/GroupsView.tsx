@@ -40,6 +40,10 @@ interface Props {
   onError: (msg: string | null) => void;
 }
 
+// Stable empty-array reference — see the `scopeCycles` comment below for why
+// a fresh `[]` literal here would defeat downstream useMemo calls.
+const EMPTY_CYCLES: ProjectCycles["cycles"] = [];
+
 const METRICS: Metric[] = [
   { key: "costCents", label: "Total cost", money: true },
   { key: "avgCostPerSeat", label: "Avg cost / seat", money: true },
@@ -68,13 +72,18 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
     sortOrderRaw === "date" && dimension === CYCLE_DIMENSION_ID ? "date" : sortOrderRaw === "alpha" ? "alpha" : "size";
   const showCycles = showCyclesRaw !== "0";
 
-  // The member list (for CSV facet values) — same source the Filter menu uses.
+  // The member list (for CSV facet values) — ranged the same way the Filter
+  // menu's own list is, so both build "Quick filter by"'s isolateValue spec
+  // and the Filter menu's own hide-list from the same set of values. An
+  // unranged list here used to disagree with the Filter menu's ranged one
+  // whenever a CSV attribute value existed on one side but not the other,
+  // producing an incomplete "hide everything except X" spec. See #23 item 2.
   useEffect(() => {
     api
-      .users()
+      .users(from || undefined, to || undefined)
       .then((r) => setUsers(r.users))
       .catch(() => setUsers([]));
-  }, []);
+  }, [from, to]);
 
   const quickFilterFacets = useMemo(
     () => buildQuickFilterFacets(timelineDimensions, dimensions, users, UNASSIGNED_KEY),
@@ -129,7 +138,7 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
         ? CYCLE_DIMENSION_LABEL
         : dimension);
   const cyclesForProject = useCallback(
-    (name: string) => projectCycles.find((p) => p.project === name)?.cycles ?? [],
+    (name: string) => projectCycles.find((p) => p.project === name)?.cycles ?? EMPTY_CYCLES,
     [projectCycles],
   );
 
@@ -162,7 +171,12 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
   }, [load]);
 
   const { scopeProject, scopeIsInferred } = resolveScopeProject(quickFilter, data?.activeProjects ?? []);
-  const scopeCycles = scopeProject ? cyclesForProject(scopeProject) : [];
+  // A stable empty-array reference for "no scope project" (or a project with
+  // no cycles) — a fresh `[]` literal here would change identity every
+  // render and defeat every useMemo downstream that depends on scopeCycles
+  // (cycleOrder, stacked), even though nothing about the data actually
+  // changed. See #23 item 3.
+  const scopeCycles = scopeProject ? cyclesForProject(scopeProject) : EMPTY_CYCLES;
   const cycleAvailable = scopeCycles.length > 0;
   // Chronological order of the current project's cycles, keyed by name — for
   // "Sort order: Date" — mirrors CycleIndex's own sort-by-start order.

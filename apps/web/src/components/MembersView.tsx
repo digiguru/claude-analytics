@@ -91,19 +91,30 @@ export function MembersView({ from, to, filter, projectCycles, onError }: Props)
     () => users.filter((u) => u.email.includes(search.toLowerCase()) && userPasses(filter, u)),
     [users, search, filter],
   );
-  const series = (detail?.daily ?? []).map((d) => ({
-    date: d.date,
-    cost: d.costCents / 100,
-    chat: d.chatMessages,
-    cc: d.ccSessions,
-  }));
-  const { data: chartData } = prepareSeries(series, {
-    granularity,
-    showTrend,
-    showForecast,
-    trendKey: "cost",
-    aggs: { cost: "sum", chat: "sum", cc: "sum" },
-  });
+  const series = useMemo(
+    () =>
+      (detail?.daily ?? []).map((d) => ({
+        date: d.date,
+        cost: d.costCents / 100,
+        chat: d.chatMessages,
+        cc: d.ccSessions,
+      })),
+    [detail],
+  );
+  // Memoised — prepareSeries does real work (bucketing, trend/forecast maths)
+  // and was previously recomputed on every render regardless of whether
+  // `series`/granularity/trend/forecast actually changed. See #23 item 3.
+  const { data: chartData } = useMemo(
+    () =>
+      prepareSeries(series, {
+        granularity,
+        showTrend,
+        showForecast,
+        trendKey: "cost",
+        aggs: { cost: "sum", chat: "sum", cc: "sum" },
+      }),
+    [series, granularity, showTrend, showForecast],
+  );
   // This person's project(s) in range, with cycle definitions — bands when they
   // were on exactly one, else a lane per project (mirrors the Groups page).
   const memberProjectCycles = projectCycles.filter((p) => detail?.projects.includes(p.project));

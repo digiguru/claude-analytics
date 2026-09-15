@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -63,6 +63,49 @@ export function OverviewView({ from, to, projectCycles, filterQuery, onError }: 
     void load();
   }, [load]);
 
+  // Distinct active users per bucket, and cost-per-active-user derived from
+  // it, folded into one memo (not computed by mutating prepareSeries' rows
+  // during render — see #23 item 3). Union each day's active emails into its
+  // week/month bucket, so "active users" for a month is the count of unique
+  // people active at any point that month — not an average of daily counts.
+  // Available only in the filtered view (the server sends per-day emails
+  // there); org-wide views fall back to the aggregated daily-active-users
+  // figure. Cost per active user is derived here (after bucketing) rather
+  // than as a per-day rate that gets averaged — averaging daily ratios
+  // understates the true period figure. Forecast rows carry no cost, so they
+  // keep no active-users/cost-per-user value.
+  const chartData = useMemo(() => {
+    if (!ov) return [];
+    const costSeries = ov.timeseries.map((d) => ({
+      date: d.date,
+      cost: d.costCents / 100,
+      dau: d.dailyActiveUsers,
+    }));
+    const { data } = prepareSeries(costSeries, {
+      granularity,
+      showTrend,
+      showForecast,
+      trendKey: "cost",
+      aggs: { cost: "sum", dau: "avg" },
+    });
+
+    const activeByBucket = new Map<string, Set<string>>();
+    for (const d of ov.timeseries) {
+      if (!d.activeEmails) continue;
+      const label = bucketLabel(d.date, granularity);
+      let set = activeByBucket.get(label);
+      if (!set) activeByBucket.set(label, (set = new Set()));
+      for (const email of d.activeEmails) set.add(email);
+    }
+
+    return data.map((row) => {
+      if (typeof row.cost !== "number") return row;
+      const distinct = activeByBucket.get(String(row.date));
+      const dau = distinct ? distinct.size : typeof row.dau === "number" ? row.dau : 0;
+      return { ...row, dau, cpd: dau > 0 ? row.cost / dau : 0 };
+    });
+  }, [ov, granularity, showTrend, showForecast]);
+
   if (loading)
     return (
       <div className="panel">
@@ -77,44 +120,6 @@ export function OverviewView({ from, to, projectCycles, filterQuery, onError }: 
     );
 
   const heaviest = ov.heaviestDays[0];
-  const costSeries = ov.timeseries.map((d) => ({
-    date: d.date,
-    cost: d.costCents / 100,
-    dau: d.dailyActiveUsers,
-  }));
-  const { data: chartData } = prepareSeries(costSeries, {
-    granularity,
-    showTrend,
-    showForecast,
-    trendKey: "cost",
-    aggs: { cost: "sum", dau: "avg" },
-  });
-
-  // Distinct active users per bucket: union each day's active emails into its
-  // week/month bucket, so "active users" for a month is the count of unique people
-  // active at any point that month — not an average of daily counts. Available only
-  // in the filtered view (the server sends per-day emails there); org-wide views
-  // fall back to the aggregated daily-active-users figure.
-  const activeByBucket = new Map<string, Set<string>>();
-  for (const d of ov.timeseries) {
-    if (!d.activeEmails) continue;
-    const label = bucketLabel(d.date, granularity);
-    let set = activeByBucket.get(label);
-    if (!set) activeByBucket.set(label, (set = new Set()));
-    for (const email of d.activeEmails) set.add(email);
-  }
-
-  // Cost per active user for each bucket = that bucket's total cost / its distinct
-  // active users. Derived here (after bucketing) rather than as a per-day rate that
-  // gets averaged — averaging daily ratios understates the true period figure.
-  // Forecast rows carry no cost, so they keep no active-users/cost-per-user value.
-  for (const row of chartData) {
-    if (typeof row.cost !== "number") continue;
-    const distinct = activeByBucket.get(String(row.date));
-    const dau = distinct ? distinct.size : typeof row.dau === "number" ? row.dau : 0;
-    row.dau = dau;
-    row.cpd = dau > 0 ? row.cost / dau : 0;
-  }
   const dauLabel = ov.filtered ? "active users" : "daily active users";
 
   return (
