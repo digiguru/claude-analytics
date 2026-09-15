@@ -681,7 +681,7 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
                           key={c.name}
                           x1={span.x1}
                           x2={span.x2}
-                          zIndex={0}
+                          zIndex={1000}
                           fill="#ffffff"
                           fillOpacity={i % 2 ? 0.07 : 0.04}
                           stroke="#2a2f3a"
@@ -707,7 +707,7 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
                       key={`${r.x1}-${r.x2}-${i}`}
                       x1={r.x1}
                       x2={r.x2}
-                      zIndex={1}
+                      zIndex={1000}
                       stroke="#d97757"
                       strokeOpacity={0.6}
                       fill="#d97757"
