@@ -35,8 +35,12 @@ function parseUTC(d: string): Date {
   return new Date(Date.UTC(y ?? NaN, (m ?? 1) - 1, day ?? 1));
 }
 
+/** Formats a UTC date as YYYY-MM-DD — or a stable fallback for an Invalid Date
+ *  (e.g. from a malformed `start`/`end` in the projects YAML flowing through
+ *  parseUTC), rather than letting toISOString() throw a RangeError and take
+ *  the whole chart down. See #30 item 4. */
 function fmtUTC(dt: Date): string {
-  return dt.toISOString().slice(0, 10);
+  return Number.isNaN(dt.getTime()) ? "invalid-date" : dt.toISOString().slice(0, 10);
 }
 
 /** Monday-anchored ISO week start, as a YYYY-MM-DD label. */

@@ -96,9 +96,12 @@ export function bucketByCycle(daily: Row[], cycles: CycleDef[]): Row[] {
     }
   }
 
+  // Metadata spreads LAST so it always wins over a same-named group sum (a
+  // group literally called "days"/"start"/"end"/"date" would otherwise
+  // silently overwrite the bucket's own metadata) — see #30 item 5.
   return buckets
     .filter((b) => b.n > 0)
-    .map((b) => ({ date: b.label, days: daysInclusive(b.start, b.end), start: b.start, end: b.end, ...b.sums }));
+    .map((b) => ({ ...b.sums, date: b.label, days: daysInclusive(b.start, b.end), start: b.start, end: b.end }));
 }
 
 /**

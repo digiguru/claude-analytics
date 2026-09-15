@@ -6,15 +6,47 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       all: true,
+      // Explicit include so `all: true` actually enumerates files no test
+      // imports at all (e.g. apps/web's not-yet-tested components) — v8's
+      // "all" mode otherwise only instruments files reachable from an
+      // executed test's import graph, which understates exactly the
+      // "pulled down by not-yet-tested components" case #36's apps/web
+      // target is about. Per-file numbers for ungated files can look lower
+      // here than a single-workspace run would show (more of the codebase is
+      // now in the shared denominator) — that's expected and does not affect
+      // the gated files below, all of which still clear their thresholds.
+      include: [
+        "packages/core/src/**/*.ts",
+        "apps/server/src/**/*.ts",
+        "apps/cli/src/**/*.ts",
+        "apps/web/src/**/*.{ts,tsx}",
+      ],
+      exclude: [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/*.d.ts",
+        "packages/core/src/__fixtures__/**",
+        "apps/server/src/__tests__/**",
+        "apps/web/src/main.tsx",
+      ],
       reporter: ["text", "lcov"],
       // Phased in per sub-issue of the test coverage epic (#31): only the files a
       // given phase actually added tests for are gated here. Phase 1 (#33) covers
       // map.ts, join.ts, export.ts; Phase 2 (#34) adds aggregate.ts; Phase 3 (#35)
       // adds apps/server's app.ts/state.ts; #25 adds client.ts/sync.ts (previously
       // excluded from coverage as untestable network I/O — the injectable
-      // fetch/sleep added for retry/backoff/timeout testing is what changed that).
-      // Later phases raise thresholds for the rest of packages/core, then apps/web,
-      // apps/cli in turn.
+      // fetch/sleep added for retry/backoff/timeout testing is what changed that);
+      // Phase 4 (#36) adds apps/web's pure-logic modules. Later phases raise
+      // thresholds for the rest of packages/core, then apps/web's components (#38)
+      // and apps/cli (#37) in turn.
+      //
+      // Note on #36's stated apps/web target (45% lines / 35% branches overall):
+      // that's arithmetically unreachable while apps/web/src/components/** stays
+      // untested, as this phase's own scope requires (component rendering is
+      // Phase 6, #38) — components are ~55% of apps/web's total line count, all
+      // at 0%. Gating the specific files this phase actually tests, at the levels
+      // they actually achieve, is the honest version of that intent; the
+      // workspace-wide number will clear 45%/35% once #38 lands.
       thresholds: {
         "packages/core/src/map.ts": { lines: 70, branches: 65 },
         "packages/core/src/join.ts": { lines: 70, branches: 65 },
@@ -24,6 +56,11 @@ export default defineConfig({
         "packages/core/src/sync.ts": { lines: 90, branches: 90 },
         "apps/server/src/app.ts": { lines: 55, branches: 45 },
         "apps/server/src/state.ts": { lines: 55, branches: 45 },
+        "apps/web/src/dragSelection.ts": { lines: 90, branches: 85 },
+        "apps/web/src/filters.ts": { lines: 75, branches: 70 },
+        "apps/web/src/series.ts": { lines: 85, branches: 60 },
+        "apps/web/src/cycles.ts": { lines: 90, branches: 85 },
+        "apps/web/src/charts.tsx": { lines: 80, branches: 70 },
       },
     },
     projects: [
