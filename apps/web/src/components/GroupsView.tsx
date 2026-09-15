@@ -201,6 +201,10 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
   }, [timelineDimensions, dimensions, dimension]);
   const secondary = secondaryOptions.some((d) => d.id === secondaryRaw) ? secondaryRaw : "";
   const secondaryLabel = secondaryOptions.find((d) => d.id === secondary)?.label ?? secondary;
+  // Human label for "Stacking by", for the totals chart's title.
+  const dimensionLabel =
+    timelineDimensions.find((d) => d.id === dimension)?.label ??
+    (dimension === MEMBER_DIMENSION_ID ? MEMBER_DIMENSION_LABEL : dimension);
   const cyclesForProject = useCallback(
     (name: string) => projectCycles.find((p) => p.project === name)?.cycles ?? [],
     [projectCycles],
@@ -345,21 +349,6 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
             ))}
           </select>
         </div>
-        <div>
-          <label>Chart metric</label>
-          <select value={String(metric.key)} onChange={(e) => setMetricKey(e.target.value)}>
-            {METRICS.map((m) => (
-              <option key={String(m.key)} value={String(m.key)}>{m.label}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label>Sort order</label>
-          <select value={sortOrder} onChange={(e) => setSortOrder(e.target.value)}>
-            <option value="size">Size (metric)</option>
-            <option value="alpha">Name (A–Z)</option>
-          </select>
-        </div>
         <a href={api.exportUrl({ dimension, from: from || undefined, to: to || undefined, product: product || undefined, filter: effectiveFilterQuery, scope: scopeValue, scopeDimension })}>
           <button className="secondary" type="button">Export CSV</button>
         </a>
@@ -468,6 +457,24 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
 
       {data && data.groups.length > 0 && (
         <>
+          <div className="row" style={{ marginBottom: 8, alignItems: "center" }}>
+            <h3 style={{ margin: 0 }}>{metric.label} by {dimensionLabel}</h3>
+            <div>
+              <label>Chart metric</label>
+              <select value={String(metric.key)} onChange={(e) => setMetricKey(e.target.value)}>
+                {METRICS.map((m) => (
+                  <option key={String(m.key)} value={String(m.key)}>{m.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label>Sort order</label>
+              <select value={sortOrder} onChange={(e) => setSortOrder(e.target.value)}>
+                <option value="size">Size (metric)</option>
+                <option value="alpha">Name (A–Z)</option>
+              </select>
+            </div>
+          </div>
           <div style={{ height: 280, marginBottom: 16 }}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData}>
