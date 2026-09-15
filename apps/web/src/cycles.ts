@@ -12,6 +12,23 @@ export type ChartBucket = Granularity | "cycle";
  *  each gap gets its own numbered label (e.g. "(no cycle 1)"), never a shared one. */
 export const NO_CYCLE_LABEL = "no cycle";
 
+/**
+ * Resolve the "Cost over time" chart's actual granularity from the raw
+ * `?granularity=` URL value: "cycle" only when cycles are actually available
+ * for whatever's in scope, "day"/"month" as given, else "week". Extracted
+ * from GroupsView (#29) so the URL/state desync it was implicated in is
+ * pinned by a test: requesting "cycle" before cycleAvailable becomes true
+ * resolves to "week" here (a real, correct fallback — the caller is
+ * responsible for not misrepresenting `bucketRaw` itself as changed; see
+ * GroupsView's granularity control, which reflects `bucketRaw` rather than
+ * this resolved value so the button doesn't visibly flip Week→Cycle).
+ */
+export function resolveBucket(bucketRaw: string, cycleAvailable: boolean): ChartBucket {
+  if (bucketRaw === "cycle") return cycleAvailable ? "cycle" : "week";
+  if (bucketRaw === "day" || bucketRaw === "month") return bucketRaw;
+  return "week";
+}
+
 type Row = Record<string, number | string>;
 
 /** Calendar day arithmetic on "YYYY-MM-DD" strings (UTC, so no DST surprises). */

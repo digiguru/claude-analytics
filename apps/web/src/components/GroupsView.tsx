@@ -1,31 +1,17 @@
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
-import { Bar, BarChart, CartesianGrid, LabelList, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
   api,
   CYCLE_DIMENSION_ID,
   CYCLE_DIMENSION_LABEL,
   MEMBER_DIMENSION_ID,
   MEMBER_DIMENSION_LABEL,
-  PRODUCTS,
-  tokens,
-  usd,
-  type GroupDayRow,
-  type GroupRow,
   type GroupsResponse,
   type ProjectCycles,
   type TimelineDimension,
   type UserListEntry,
 } from "../api.js";
-import {
-  CHART_MARGIN,
-  COLORS,
-  NEUTRAL_COLOR,
-  RechartsReferenceArea as ReferenceArea,
-  Y_AXIS_WIDTH,
-  wrapLabel,
-  xAxisProps,
-} from "../charts.js";
-import { bucketByCycle, snapBand, type ChartBucket } from "../cycles.js";
+import { COLORS, NEUTRAL_COLOR } from "../charts.js";
+import { resolveBucket } from "../cycles.js";
 import {
   combineSummaries,
   dragSelectionReducer,
@@ -34,16 +20,15 @@ import {
   resolveRanges,
   summarizeRows,
 } from "../dragSelection.js";
-import { bucketSeries, type Granularity } from "../series.js";
+import { buildGroupColumns } from "../groupColumns.js";
+import { buildQuickFilterFacets, parseQuickFilter, resolveScopeProject } from "../quickFilter.js";
 import { useUrlParam } from "../url.js";
-import { buildFacets, EMAIL_FACET, isolateValue, mergeFilterSpecs, type FilterSpec } from "../filters.js";
-import { CycleRail } from "./CycleRail.js";
-import { NestedGroupsTable } from "./NestedGroupsTable.js";
-import { SortableTable, type Column } from "./SortableTable.js";
-import { VariableWidthBars } from "./VariableWidthBars.js";
-
-/** Chart/table ordering: by metric magnitude ("size", default) or by group name ("alpha"). */
-type SortOrder = "size" | "alpha" | "date";
+import { isolateValue, mergeFilterSpecs, type FilterSpec } from "../filters.js";
+import { OTHER_KEY, stackRows, UNASSIGNED_KEY, type ChartBucket } from "../stack.js";
+import { CostOverTimeChart } from "./CostOverTimeChart.js";
+import { GroupsControls } from "./GroupsControls.js";
+import { GroupsTableSection } from "./GroupsTableSection.js";
+import { GroupTotalsChart, type Metric, type SortOrder } from "./GroupTotalsChart.js";
 
 interface Props {
   from: string;
@@ -55,7 +40,6 @@ interface Props {
   onError: (msg: string | null) => void;
 }
 
-type Metric = { key: keyof GroupRow; label: string; money?: boolean };
 const METRICS: Metric[] = [
   { key: "costCents", label: "Total cost", money: true },
   { key: "avgCostPerSeat", label: "Avg cost / seat", money: true },
@@ -65,108 +49,6 @@ const METRICS: Metric[] = [
   { key: "chatMessages", label: "Chat messages" },
   { key: "activeUserDays", label: "Active user-days" },
 ];
-
-// Must match core's UNASSIGNED_KEY (packages/core/src/projects.ts) — the bucket for
-// days with no active project/team/client membership.
-const UNASSIGNED_KEY = "Unassigned";
-const OTHER_KEY = "Other";
-const MAX_STACK_KEYS = 8;
-const GRANULARITIES: { key: Granularity; label: string }[] = [
-  { key: "day", label: "Day" },
-  { key: "week", label: "Week" },
-  { key: "month", label: "Month" },
-];
-
-/** One "Quick filter by" choice: a facet (timeline or CSV) and its values.
- *  Timeline facets scope date-aware, via the server's `scope`/`scopeDimension`
- *  params; CSV facets are a plain member-filter hide-all-but-one, merged into
- *  this component's own `filter` query (see isolateValue/mergeFilterSpecs). */
-interface QuickFilterFacet {
-  id: string;
-  label: string;
-  values: string[];
-  kind: "timeline" | "csv";
-}
-
-/** Pivot the daily group×date rows into one row per bucket with a cost column per
- *  key, capping the stack at the top MAX_STACK_KEYS keys (by total cost) plus an
- *  "Other" catch-all. Unassigned always renders, last, regardless of rank. Buckets
- *  by day/week/month, or — when scoped to one project with cycles — by cycle. */
-function useStackedSeries(
-  timeseries: GroupDayRow[],
-  keys: string[],
-  bucket: ChartBucket,
-  cycles: ProjectCycles["cycles"],
-) {
-  return useMemo(() => {
-    if (timeseries.length === 0) return { rows: [] as Record<string, number | string>[], keys: [] as string[] };
-
-    const rankedKeys = keys.filter((k) => k !== UNASSIGNED_KEY);
-    const hasUnassigned = keys.includes(UNASSIGNED_KEY);
-    const top = new Set(rankedKeys.slice(0, MAX_STACK_KEYS));
-    const hasOther = rankedKeys.length > top.size;
-
-    const byDate = new Map<string, Record<string, number | string>>();
-    for (const row of timeseries) {
-      let acc = byDate.get(row.date);
-      if (!acc) byDate.set(row.date, (acc = { date: row.date }));
-      const label = row.key === UNASSIGNED_KEY || top.has(row.key) ? row.key : OTHER_KEY;
-      acc[label] = (Number(acc[label]) || 0) + row.costCents / 100;
-    }
-    const daily = [...byDate.values()].sort((a, b) => String(a.date).localeCompare(String(b.date)));
-    const bucketed = bucket === "cycle" ? bucketByCycle(daily, cycles) : bucketSeries(daily, bucket, {});
-
-    const outKeys = [
-      ...rankedKeys.filter((k) => top.has(k)),
-      ...(hasOther ? [OTHER_KEY] : []),
-      ...(hasUnassigned ? [UNASSIGNED_KEY] : []),
-    ];
-    return { rows: bucketed, keys: outKeys };
-  }, [timeseries, keys, bucket, cycles]);
-}
-
-/** Recharts <Tooltip content>: the default per-series list, plus a "Total"
- *  row summing every stacked series at the hovered bucket. */
-function StackedCostTooltip({
-  active,
-  payload,
-  label,
-}: {
-  active?: boolean;
-  payload?: { dataKey?: string; name?: string; value?: number; color?: string }[];
-  label?: string;
-}) {
-  if (!active || !payload || payload.length === 0) return null;
-  const total = payload.reduce((sum, p) => sum + (Number(p.value) || 0), 0);
-  return (
-    <div
-      style={{
-        background: "#1a1d24",
-        border: "1px solid #2a2f3a",
-        borderRadius: 6,
-        padding: "8px 10px",
-        fontSize: 12,
-        lineHeight: 1.5,
-      }}
-    >
-      <div style={{ marginBottom: 4 }}>
-        <strong>{label}</strong>
-      </div>
-      {payload.map((p) => (
-        <div key={p.dataKey} className="row" style={{ gap: 6, alignItems: "center" }}>
-          <span style={{ width: 8, height: 8, borderRadius: 2, background: p.color, display: "inline-block" }} />
-          <span className="muted" style={{ flex: 1 }}>
-            {p.name}
-          </span>
-          <span>{usd((Number(p.value) || 0) * 100)}</span>
-        </div>
-      ))}
-      <div style={{ marginTop: 4, paddingTop: 4, borderTop: "1px solid #2a2f3a" }}>
-        Total: <strong>{usd(total * 100)}</strong>
-      </div>
-    </div>
-  );
-}
 
 export function GroupsView({ from, to, dimensions, timelineDimensions, projectCycles, filterQuery, onError }: Props) {
   const [dimension, setDimension] = useUrlParam("groupBy", ""); // "Stacking by"
@@ -194,30 +76,11 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
       .catch(() => setUsers([]));
   }, []);
 
-  // Every facet "Quick filter by" can narrow to a single value of: the timeline
-  // facets (Project/Team/Client) and every CSV column, each with its distinct values.
-  const quickFilterFacets: QuickFilterFacet[] = useMemo(() => {
-    const timeline: QuickFilterFacet[] = timelineDimensions.map((d) => ({
-      id: d.id,
-      label: d.label,
-      values: d.values.filter((v) => v !== UNASSIGNED_KEY),
-      kind: "timeline",
-    }));
-    const csv: QuickFilterFacet[] = buildFacets(users, dimensions)
-      .filter((f) => f.key !== EMAIL_FACET)
-      .map((f) => ({ id: f.key, label: f.label, values: f.values, kind: "csv" }));
-    return [...timeline, ...csv];
-  }, [timelineDimensions, dimensions, users]);
-
-  const quickFilter = useMemo(() => {
-    const idx = qfRaw.indexOf("::");
-    if (idx === -1) return null;
-    const facetId = qfRaw.slice(0, idx);
-    const value = qfRaw.slice(idx + 2);
-    const facet = quickFilterFacets.find((f) => f.id === facetId);
-    if (!facet || !facet.values.includes(value)) return null;
-    return { ...facet, value };
-  }, [qfRaw, quickFilterFacets]);
+  const quickFilterFacets = useMemo(
+    () => buildQuickFilterFacets(timelineDimensions, dimensions, users, UNASSIGNED_KEY),
+    [timelineDimensions, dimensions, users],
+  );
+  const quickFilter = useMemo(() => parseQuickFilter(qfRaw, quickFilterFacets), [qfRaw, quickFilterFacets]);
 
   // Reset an invalid pick (e.g. the facet's value list changed) once facets have
   // actually loaded — don't clear a persisted URL pick just because data is still loading.
@@ -246,7 +109,7 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
 
   // Secondary (table drill-down) options: every dimension the table could group
   // by, minus whichever is currently "Stacking by" (grouping by the same thing
-  // twice is meaningless). Doesn't affect the chart — see NestedGroupsTable.
+  // twice is meaningless). Doesn't affect the chart — see GroupsTableSection.
   const secondaryOptions = useMemo(() => {
     const all = [
       ...timelineDimensions.map((d) => ({ id: d.id, label: d.label })),
@@ -298,14 +161,7 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
     void load();
   }, [load]);
 
-  // The PROJECT this chart is effectively scoped to, for Cycle purposes (cycles
-  // are always project-specific): an explicit Quick-filter-by-Project pick, else
-  // — regardless of what narrowed it (a Team/Client/CSV quick filter, or the
-  // member filter) — whichever single project is the only one left active.
-  // Never auto-selects Cycle granularity, only offers it.
-  const explicitProject = quickFilter?.kind === "timeline" && quickFilter.id === "@project" ? quickFilter.value : "";
-  const scopeProject = explicitProject || (data?.activeProjects.length === 1 ? data.activeProjects[0]! : null);
-  const scopeIsInferred = !explicitProject && Boolean(scopeProject);
+  const { scopeProject, scopeIsInferred } = resolveScopeProject(quickFilter, data?.activeProjects ?? []);
   const scopeCycles = scopeProject ? cyclesForProject(scopeProject) : [];
   const cycleAvailable = scopeCycles.length > 0;
   // Chronological order of the current project's cycles, keyed by name — for
@@ -324,12 +180,7 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
     else if (dimensions.length) setDimension(dimensions[0]!, true);
   }, [dimensions, timelineDimensions, dimension, cycleAvailable, setDimension]);
 
-  const bucket: ChartBucket =
-    bucketRaw === "cycle" && cycleAvailable
-      ? "cycle"
-      : bucketRaw === "day" || bucketRaw === "month"
-        ? bucketRaw
-        : "week";
+  const bucket: ChartBucket = resolveBucket(bucketRaw, cycleAvailable);
 
   // Order groups for the chart (and the table's default) by the selected metric,
   // alphabetically, or — only offered when Stacking by is Cycle — chronologically
@@ -350,58 +201,17 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
   // The "Group" column sorts chronologically when Stacking by is Cycle (clicking
   // its header to re-sort alphabetically wouldn't be useful for cycle names
   // anyway), else by name as usual; always displays the group's name either way.
-  const columns: Column<GroupRow>[] = useMemo(
-    () => [
-      {
-        key: "key",
-        label: "Group",
-        value: (r) => (dimension === CYCLE_DIMENSION_ID ? (cycleOrder.get(r.key) ?? Number.MAX_SAFE_INTEGER) : r.key),
-        render: (r) => r.key,
-      },
-      { key: "seats", label: "Seats", numeric: true, value: (r) => r.seats },
-      { key: "activeUsers", label: "Active users", numeric: true, value: (r) => r.activeUsers },
-      {
-        key: "activeUserDays",
-        label: "Active days",
-        numeric: true,
-        value: (r) => r.activeUserDays,
-        render: (r) => r.activeUserDays.toFixed(1),
-      },
-      { key: "costCents", label: "Cost", numeric: true, value: (r) => r.costCents, render: (r) => usd(r.costCents) },
-      {
-        key: "avgCostPerSeat",
-        label: "$/seat",
-        numeric: true,
-        value: (r) => r.avgCostPerSeat,
-        render: (r) => usd(r.avgCostPerSeat),
-      },
-      {
-        key: "avgCostPerActiveUser",
-        label: "$/active user",
-        numeric: true,
-        value: (r) => r.avgCostPerActiveUser,
-        render: (r) => usd(r.avgCostPerActiveUser),
-      },
-      {
-        key: "totalTokens",
-        label: "Tokens",
-        numeric: true,
-        value: (r) => r.totalTokens,
-        render: (r) => tokens(r.totalTokens),
-      },
-      { key: "chatMessages", label: "Chat", numeric: true, value: (r) => r.chatMessages },
-      { key: "ccSessions", label: "CC sessions", numeric: true, value: (r) => r.ccSessions },
-      { key: "ccLocAdded", label: "CC loc+", numeric: true, value: (r) => r.ccLocAdded },
-      { key: "coworkMessages", label: "Cowork", numeric: true, value: (r) => r.coworkMessages },
-      { key: "webSearches", label: "Web", numeric: true, value: (r) => r.webSearches },
-    ],
+  const columns = useMemo(
+    () => buildGroupColumns(dimension === CYCLE_DIMENSION_ID, cycleOrder),
     [dimension, cycleOrder],
   );
 
-  const chartData = orderedGroups.map((g) => ({ name: g.key, value: Number(g[metric.key]) }));
   // The chart always stacks by "Stacking by" (the primary dimension) — the
   // table's Secondary drill-down doesn't touch it.
-  const stacked = useStackedSeries(data?.timeseries ?? [], data?.keys ?? [], bucket, scopeCycles);
+  const stacked = useMemo(
+    () => stackRows(data?.timeseries ?? [], data?.keys ?? [], bucket, scopeCycles),
+    [data, bucket, scopeCycles],
+  );
   const stackColor = useMemo(() => {
     const colorByKey = new Map<string, string>();
     let i = 0;
@@ -439,9 +249,14 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
   const [dragState, dispatchDrag] = useReducer(dragSelectionReducer, initialDragSelectionState);
   const { regions, activeDrag } = dragState;
 
+  // Reset the selection when the *query* changes (a new dimension/product/
+  // filter/scope/secondary/date-range — anything `load`'s identity captures)
+  // or the client-only bucket granularity changes — not on every `data`
+  // identity change, which used to also fire on a same-query refetch whose
+  // content hadn't actually changed. See #29.
   useEffect(() => {
     dispatchDrag({ type: "reset" });
-  }, [bucket, dimension, data]);
+  }, [bucket, load]);
 
   const liveRanges = useMemo(
     () => liveIndexRanges(chartLabels, regions, activeDrag),
@@ -484,93 +299,23 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
 
   return (
     <div className="panel">
-      <div className="row" style={{ marginBottom: 16 }}>
-        <div>
-          <label>Stacking by</label>
-          <select value={dimension} onChange={(e) => setDimension(e.target.value)}>
-            {dimensions.length === 0 && timelineDimensions.length === 0 && (
-              <option value="">— no CSV or projects file loaded —</option>
-            )}
-            {timelineDimensions.length > 0 && (
-              <optgroup label="Timeline">
-                {timelineDimensions.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.label}
-                  </option>
-                ))}
-                {cycleAvailable && <option value={CYCLE_DIMENSION_ID}>{CYCLE_DIMENSION_LABEL}</option>}
-              </optgroup>
-            )}
-            {dimensions.length > 0 && (
-              <optgroup label="CSV columns">
-                {dimensions.map((d) => (
-                  <option key={d} value={d}>
-                    {d}
-                  </option>
-                ))}
-              </optgroup>
-            )}
-          </select>
-        </div>
-        {quickFilterFacets.length > 0 && (
-          <div>
-            <label>Quick filter by</label>
-            <select value={qfRaw} onChange={(e) => setQf(e.target.value)}>
-              <option value="">None</option>
-              {quickFilterFacets.map((f) => (
-                <optgroup label={f.label} key={f.id}>
-                  {f.values.map((v) => (
-                    <option key={`${f.id}::${v}`} value={`${f.id}::${v}`}>
-                      {v}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
-          </div>
-        )}
-        <div>
-          <label>Product (cost/tokens)</label>
-          <select value={product} onChange={(e) => setProduct(e.target.value)}>
-            <option value="">All products</option>
-            {PRODUCTS.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
-        </div>
-        <a
-          href={api.exportUrl({
-            dimension,
-            from: from || undefined,
-            to: to || undefined,
-            product: product || undefined,
-            filter: effectiveFilterQuery,
-            scope: scopeValue,
-            scopeDimension,
-          })}
-        >
-          <button className="secondary" type="button">
-            Export CSV
-          </button>
-        </a>
-        <a
-          href={api.exportGroupsDailyUrl({
-            dimension,
-            from: from || undefined,
-            to: to || undefined,
-            product: product || undefined,
-            filter: effectiveFilterQuery,
-            scope: scopeValue,
-            scopeDimension,
-          })}
-        >
-          <button className="secondary" type="button">
-            Export daily CSV
-          </button>
-        </a>
-      </div>
+      <GroupsControls
+        dimension={dimension}
+        onDimensionChange={setDimension}
+        dimensions={dimensions}
+        timelineDimensions={timelineDimensions}
+        cycleAvailable={cycleAvailable}
+        quickFilterFacets={quickFilterFacets}
+        qfRaw={qfRaw}
+        onQfChange={setQf}
+        product={product}
+        onProductChange={setProduct}
+        from={from}
+        to={to}
+        effectiveFilterQuery={effectiveFilterQuery}
+        scopeValue={scopeValue}
+        scopeDimension={scopeDimension}
+      />
 
       {loading && <p className="muted">Loading…</p>}
 
@@ -582,345 +327,55 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
       )}
 
       {data && stacked.rows.length > 0 && (
-        <div style={{ marginBottom: 20 }}>
-          <div className="row" style={{ marginBottom: 8, alignItems: "center" }}>
-            <h3 style={{ margin: 0 }}>Cost over time</h3>
-            <div className="segmented" role="group" aria-label="Granularity">
-              {GRANULARITIES.map((g) => (
-                <button
-                  key={g.key}
-                  type="button"
-                  className={bucket === g.key ? "active" : ""}
-                  onClick={() => setBucket(g.key)}
-                >
-                  {g.label}
-                </button>
-              ))}
-              {cycleAvailable && (
-                <button type="button" className={bucket === "cycle" ? "active" : ""} onClick={() => setBucket("cycle")}>
-                  Cycle
-                </button>
-              )}
-            </div>
-            {(cycleAvailable || railProjects.length > 0) && (
-              <button className="secondary" type="button" onClick={() => setShowCycles(showCycles ? "0" : "1")}>
-                {showCycles ? "Hide cycles" : "Show cycles"}
-              </button>
-            )}
-          </div>
-          <div className="stat-grid" style={{ marginBottom: 12 }}>
-            <div className="stat">
-              <p className="label muted">All dates total</p>
-              <div className="value">{usd(overallSummary.total * 100)}</div>
-              {stacked.keys.length > 1 &&
-                stacked.keys
-                  .filter((k) => overallSummary.byKey.has(k))
-                  .map((k) => (
-                    <div key={k} className="row muted" style={{ gap: 6, alignItems: "center", fontSize: 12 }}>
-                      <span
-                        style={{
-                          width: 8,
-                          height: 8,
-                          borderRadius: 2,
-                          background: stackColor.get(k),
-                          display: "inline-block",
-                        }}
-                      />
-                      <span style={{ flex: 1 }}>{k}</span>
-                      <span>{usd((overallSummary.byKey.get(k) ?? 0) * 100)}</span>
-                    </div>
-                  ))}
-            </div>
-            {combinedRegionSummary && (
-              <div className="stat">
-                <p className="label muted">
-                  Selected total ({regionSummaries.length} region{regionSummaries.length === 1 ? "" : "s"})
-                </p>
-                <div className="value">{usd(combinedRegionSummary.total * 100)}</div>
-                {stacked.keys.length > 1 &&
-                  stacked.keys
-                    .filter((k) => combinedRegionSummary.byKey.has(k))
-                    .map((k) => (
-                      <div key={k} className="row muted" style={{ gap: 6, alignItems: "center", fontSize: 12 }}>
-                        <span
-                          style={{
-                            width: 8,
-                            height: 8,
-                            borderRadius: 2,
-                            background: stackColor.get(k),
-                            display: "inline-block",
-                          }}
-                        />
-                        <span style={{ flex: 1 }}>{k}</span>
-                        <span>{usd((combinedRegionSummary.byKey.get(k) ?? 0) * 100)}</span>
-                      </div>
-                    ))}
-              </div>
-            )}
-          </div>
-          {bucket === "cycle" ? (
-            // Recharts' BarChart always gives every category an equal-width band,
-            // which would misrepresent cycles of very different lengths — use a
-            // hand-built chart instead where bar width is proportional to each
-            // cycle's real day-count (see VariableWidthBars).
-            <VariableWidthBars rows={stacked.rows} keys={stacked.keys} colors={stackColor} height={280} />
-          ) : (
-            <div style={{ height: 280, position: "relative", userSelect: activeDrag ? "none" : undefined }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={stacked.rows}
-                  margin={CHART_MARGIN}
-                  onMouseDown={handleChartMouseDown}
-                  onMouseMove={handleChartMouseMove}
-                  onMouseUp={commitDrag}
-                  onMouseLeave={commitDrag}
-                >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#2a2f3a" />
-                  {annotateBands &&
-                    scopeCycles.map((c, i) => {
-                      const span = snapBand(c, chartLabels, bucket);
-                      if (!span) return null;
-                      const x1Idx = chartLabels.indexOf(span.x1);
-                      const x2Idx = chartLabels.indexOf(span.x2);
-                      const wide = x2Idx - x1Idx >= 1;
-                      return (
-                        <ReferenceArea
-                          key={c.name}
-                          x1={span.x1}
-                          x2={span.x2}
-                          zIndex={1000}
-                          fill="#ffffff"
-                          fillOpacity={i % 2 ? 0.07 : 0.04}
-                          stroke="#2a2f3a"
-                          strokeDasharray="3 3"
-                          label={
-                            wide
-                              ? {
-                                  value: wrapLabel(c.name, 18, 1)[0],
-                                  position: "insideTopLeft",
-                                  fill: "#9aa3b2",
-                                  fontSize: 11,
-                                }
-                              : undefined
-                          }
-                        />
-                      );
-                    })}
-                  <XAxis
-                    dataKey="date"
-                    stroke="#9aa3b2"
-                    fontSize={11}
-                    {...xAxisProps(stacked.rows.length, 10, { rotateWhenShort: true })}
-                  />
-                  <YAxis stroke="#9aa3b2" fontSize={12} width={Y_AXIS_WIDTH} />
-                  <Tooltip content={<StackedCostTooltip />} />
-                  <Legend />
-                  {stacked.keys.map((key) => (
-                    <Bar key={key} dataKey={key} stackId="groups" fill={stackColor.get(key)} name={key} />
-                  ))}
-                  {liveRegions.map((r, i) => (
-                    <ReferenceArea
-                      key={`${r.x1}-${r.x2}-${i}`}
-                      x1={r.x1}
-                      x2={r.x2}
-                      zIndex={1000}
-                      stroke="#d97757"
-                      strokeOpacity={0.6}
-                      fill="#d97757"
-                      fillOpacity={0.15}
-                    />
-                  ))}
-                </BarChart>
-              </ResponsiveContainer>
-              {regionSummaries.length > 0 && (
-                <div
-                  style={{
-                    position: "absolute",
-                    top: 8,
-                    right: 12,
-                    zIndex: 30,
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 6,
-                    pointerEvents: "none",
-                  }}
-                >
-                  {regionSummaries.length > 1 && (
-                    <button
-                      type="button"
-                      className="secondary"
-                      style={{ alignSelf: "flex-end", fontSize: 11, padding: "2px 8px", pointerEvents: "auto" }}
-                      onClick={clearSelection}
-                    >
-                      Clear all
-                    </button>
-                  )}
-                  {regionSummaries.map((s, i) => (
-                    <div
-                      key={`${s.x1}-${s.x2}-${i}`}
-                      style={{
-                        background: "#1a1d24",
-                        border: "1px solid #2a2f3a",
-                        borderRadius: 6,
-                        padding: "8px 10px",
-                        fontSize: 12,
-                        lineHeight: 1.5,
-                        pointerEvents: "auto",
-                        maxWidth: 220,
-                      }}
-                    >
-                      <div className="row" style={{ justifyContent: "space-between", gap: 8, marginBottom: 4 }}>
-                        <strong>{s.x1 === s.x2 ? s.x1 : `${s.x1} – ${s.x2}`}</strong>
-                        <button
-                          type="button"
-                          className="secondary"
-                          style={{ padding: "0 6px", lineHeight: 1.3 }}
-                          onClick={() => removeRegion(i)}
-                          aria-label="Remove selection"
-                        >
-                          ×
-                        </button>
-                      </div>
-                      <div style={{ marginBottom: stacked.keys.length > 1 ? 4 : 0 }}>
-                        Total: <strong>{usd(s.total * 100)}</strong>
-                      </div>
-                      {stacked.keys.length > 1 &&
-                        stacked.keys
-                          .filter((k) => s.byKey.has(k))
-                          .map((k) => (
-                            <div key={k} className="row" style={{ gap: 6, alignItems: "center" }}>
-                              <span
-                                style={{
-                                  width: 8,
-                                  height: 8,
-                                  borderRadius: 2,
-                                  background: stackColor.get(k),
-                                  display: "inline-block",
-                                }}
-                              />
-                              <span className="muted" style={{ flex: 1 }}>
-                                {k}
-                              </span>
-                              <span>{usd((s.byKey.get(k) ?? 0) * 100)}</span>
-                            </div>
-                          ))}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-          {bucket !== "cycle" && (
-            <p className="muted" style={{ fontSize: 11, margin: "4px 0 0" }}>
-              Drag to select a range · Shift-drag or shift-click to add another region
-            </p>
-          )}
-          {showCycles && bucket !== "cycle" && railProjects.length > 0 && (
-            <CycleRail
-              labels={chartLabels}
-              projects={railProjects.map((p) => ({ project: p.project, cycles: p.cycles }))}
-              granularity={bucket}
-              moreCount={Math.max(0, projectCycles.length - railProjects.length)}
-            />
-          )}
-        </div>
+        <CostOverTimeChart
+          stacked={stacked}
+          bucket={bucket}
+          onBucketChange={setBucket}
+          cycleAvailable={cycleAvailable}
+          showCycles={showCycles}
+          onToggleCycles={() => setShowCycles(showCycles ? "0" : "1")}
+          overallSummary={overallSummary}
+          combinedRegionSummary={combinedRegionSummary}
+          regionSummaries={regionSummaries}
+          stackColor={stackColor}
+          chartLabels={chartLabels}
+          annotateBands={annotateBands}
+          scopeCycles={scopeCycles}
+          railProjects={railProjects}
+          projectCycles={projectCycles}
+          activeDrag={activeDrag}
+          liveRegions={liveRegions}
+          onChartMouseDown={handleChartMouseDown}
+          onChartMouseMove={handleChartMouseMove}
+          onCommitDrag={commitDrag}
+          onRemoveRegion={removeRegion}
+          onClearSelection={clearSelection}
+        />
       )}
 
       {data && data.groups.length > 0 && (
         <>
-          <div className="row" style={{ marginBottom: 8, alignItems: "center" }}>
-            <h3 style={{ margin: 0 }}>
-              {metric.label} by {dimensionLabel}
-            </h3>
-            <div>
-              <label>Chart metric</label>
-              <select value={String(metric.key)} onChange={(e) => setMetricKey(e.target.value)}>
-                {METRICS.map((m) => (
-                  <option key={String(m.key)} value={String(m.key)}>
-                    {m.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label>Sort order</label>
-              <select value={sortOrder} onChange={(e) => setSortOrder(e.target.value)}>
-                <option value="size">Size (metric)</option>
-                <option value="alpha">Name (A–Z)</option>
-                {dimension === CYCLE_DIMENSION_ID && <option value="date">Date</option>}
-              </select>
-            </div>
-          </div>
-          <div style={{ height: 280, marginBottom: 16 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData} margin={{ ...CHART_MARGIN, top: 24 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#2a2f3a" />
-                <XAxis
-                  dataKey="name"
-                  stroke="#9aa3b2"
-                  fontSize={12}
-                  {...xAxisProps(chartData.length, Math.max(0, ...chartData.map((d) => d.name.length)))}
-                />
-                <YAxis stroke="#9aa3b2" fontSize={12} />
-                <Tooltip
-                  contentStyle={{ background: "#1a1d24", border: "1px solid #2a2f3a" }}
-                  formatter={(v) => {
-                    const n = Number(v ?? 0);
-                    return metric.money ? usd(n) : metric.key === "totalTokens" ? tokens(n) : n;
-                  }}
-                />
-                <Bar dataKey="value" fill="#d97757" name={metric.label}>
-                  <LabelList
-                    dataKey="value"
-                    position="top"
-                    fill="#9aa3b2"
-                    fontSize={11}
-                    formatter={(v) => {
-                      const n = Number(v ?? 0);
-                      return metric.money ? usd(n) : metric.key === "totalTokens" ? tokens(n) : n;
-                    }}
-                  />
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-
-          {secondaryOptions.length > 0 && (
-            <div className="row" style={{ marginBottom: 8, alignItems: "center" }}>
-              <div>
-                <label>Table breakdown by</label>
-                <select value={secondary} onChange={(e) => setSecondary(e.target.value)}>
-                  <option value="">None</option>
-                  {secondaryOptions.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              {secondary && (
-                <p className="muted" style={{ margin: 0 }}>
-                  Expand a row below to see its breakdown by {secondaryLabel}.
-                </p>
-              )}
-            </div>
-          )}
-
-          {data.secondaryDimension ? (
-            <NestedGroupsTable
-              columns={columns}
-              primaryRows={orderedGroups}
-              secondaryRows={data.secondaryGroups}
-              secondaryLabel={secondaryLabel}
-            />
-          ) : (
-            <SortableTable
-              columns={columns}
-              rows={orderedGroups}
-              initialSort={sortOrder === "size" ? String(metric.key) : "key"}
-              initialDesc={sortOrder === "size"}
-            />
-          )}
+          <GroupTotalsChart
+            dimensionLabel={dimensionLabel}
+            metric={metric}
+            metrics={METRICS}
+            onMetricChange={setMetricKey}
+            sortOrder={sortOrder}
+            onSortOrderChange={setSortOrder}
+            showDateSort={dimension === CYCLE_DIMENSION_ID}
+            orderedGroups={orderedGroups}
+          />
+          <GroupsTableSection
+            columns={columns}
+            orderedGroups={orderedGroups}
+            data={data}
+            secondary={secondary}
+            onSecondaryChange={setSecondary}
+            secondaryOptions={secondaryOptions}
+            secondaryLabel={secondaryLabel}
+            sortOrder={sortOrder}
+            metricKey={String(metric.key)}
+          />
         </>
       )}
 

@@ -36,9 +36,11 @@ export default defineConfig({
       // adds apps/server's app.ts/state.ts; #25 adds client.ts/sync.ts (previously
       // excluded from coverage as untestable network I/O — the injectable
       // fetch/sleep added for retry/backoff/timeout testing is what changed that);
-      // Phase 4 (#36) adds apps/web's pure-logic modules. Later phases raise
-      // thresholds for the rest of packages/core, then apps/web's components (#38)
-      // and apps/cli (#37) in turn.
+      // Phase 4 (#36) adds apps/web's pure-logic modules; #29 (GroupsView
+      // decomposition) adds the further extractions that came out of it
+      // (stack.ts, quickFilter.ts, groupColumns.ts, cycles.ts's resolveBucket).
+      // Later phases raise thresholds for the rest of packages/core, then
+      // apps/web's components (#38) and apps/cli (#37) in turn.
       //
       // Note on #36's stated apps/web target (45% lines / 35% branches overall):
       // that's arithmetically unreachable while apps/web/src/components/** stays
@@ -61,6 +63,9 @@ export default defineConfig({
         "apps/web/src/series.ts": { lines: 85, branches: 60 },
         "apps/web/src/cycles.ts": { lines: 90, branches: 85 },
         "apps/web/src/charts.tsx": { lines: 80, branches: 70 },
+        "apps/web/src/stack.ts": { lines: 95, branches: 90 },
+        "apps/web/src/quickFilter.ts": { lines: 95, branches: 90 },
+        "apps/web/src/groupColumns.ts": { lines: 90, branches: 80 },
       },
     },
     projects: [
