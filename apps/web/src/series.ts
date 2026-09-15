@@ -32,7 +32,7 @@ const FORECAST_PERIODS: Record<Granularity, number> = { day: 14, week: 8, month:
 
 function parseUTC(d: string): Date {
   const [y, m, day] = d.split("-").map(Number);
-  return new Date(Date.UTC(y, (m ?? 1) - 1, day ?? 1));
+  return new Date(Date.UTC(y ?? NaN, (m ?? 1) - 1, day ?? 1));
 }
 
 function fmtUTC(dt: Date): string {
