@@ -16,8 +16,8 @@ test("StackedCostTooltip: lists each series plus a Total row summing them", () =
       active
       label="2026-06-01"
       payload={[
-        { dataKey: "Alpha", name: "Alpha", value: 10, color: "#111" },
-        { dataKey: "Beta", name: "Beta", value: 5, color: "#222" },
+        { dataKey: "Alpha", name: "Alpha", value: 1000, color: "#111" },
+        { dataKey: "Beta", name: "Beta", value: 500, color: "#222" },
       ]}
     />,
   );
@@ -42,8 +42,8 @@ test("StackedCostTooltip: rows with no dataKey at all still all render, keyed di
     <StackedCostTooltip
       active
       payload={[
-        { name: "Alpha", value: 10 },
-        { name: "Beta", value: 5 },
+        { name: "Alpha", value: 1000 },
+        { name: "Beta", value: 500 },
       ]}
     />,
   );

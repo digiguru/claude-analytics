@@ -118,7 +118,7 @@ export function CostOverTimeChart({
       <div className="stat-grid" style={{ marginBottom: 12 }}>
         <div className="stat">
           <p className="label muted">All dates total</p>
-          <div className="value">{usd(overallSummary.total * 100)}</div>
+          <div className="value">{usd(overallSummary.total)}</div>
           <KeyBreakdownRows keys={stacked.keys} byKey={overallSummary.byKey} colors={stackColor} outerMuted />
         </div>
         {combinedRegionSummary && (
@@ -126,7 +126,7 @@ export function CostOverTimeChart({
             <p className="label muted">
               Selected total ({regionSummaries.length} region{regionSummaries.length === 1 ? "" : "s"})
             </p>
-            <div className="value">{usd(combinedRegionSummary.total * 100)}</div>
+            <div className="value">{usd(combinedRegionSummary.total)}</div>
             <KeyBreakdownRows keys={stacked.keys} byKey={combinedRegionSummary.byKey} colors={stackColor} outerMuted />
           </div>
         )}
@@ -185,7 +185,7 @@ export function CostOverTimeChart({
                 fontSize={11}
                 {...xAxisProps(stacked.rows.length, 10, { rotateWhenShort: true })}
               />
-              <YAxis stroke="#9aa3b2" fontSize={12} width={Y_AXIS_WIDTH} />
+              <YAxis stroke="#9aa3b2" fontSize={12} width={Y_AXIS_WIDTH} tickFormatter={(v: number) => usd(v)} />
               <Tooltip content={<StackedCostTooltip />} />
               <Legend />
               {stacked.keys.map((key) => (
@@ -255,7 +255,7 @@ export function CostOverTimeChart({
                     </button>
                   </div>
                   <div style={{ marginBottom: stacked.keys.length > 1 ? 4 : 0 }}>
-                    Total: <strong>{usd(s.total * 100)}</strong>
+                    Total: <strong>{usd(s.total)}</strong>
                   </div>
                   <KeyBreakdownRows keys={stacked.keys} byKey={s.byKey} colors={stackColor} />
                 </div>

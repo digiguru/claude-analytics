@@ -47,7 +47,10 @@ export function stackRows(
     let acc = byDate.get(row.date);
     if (!acc) byDate.set(row.date, (acc = { date: row.date }));
     const label = row.key === UNASSIGNED_KEY || top.has(row.key) ? row.key : OTHER_KEY;
-    acc[label] = (Number(acc[label]) || 0) + row.costCents / 100;
+    // Accumulate in cents (integers) — converting to float dollars before
+    // summing drifts from the server's integer-cent totals (#21). Divide
+    // only at display time, via `usd`.
+    acc[label] = (Number(acc[label]) || 0) + row.costCents;
   }
   const daily = [...byDate.values()].sort((a, b) => String(a.date).localeCompare(String(b.date)));
   const bucketed = bucket === "cycle" ? bucketByCycle(daily, cycles) : bucketSeries(daily, bucket, {});

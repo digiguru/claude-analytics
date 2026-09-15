@@ -34,7 +34,7 @@ export function KeyBreakdownRows({
             <span className="muted" style={{ flex: 1 }}>
               {k}
             </span>
-            <span>{usd((byKey.get(k) ?? 0) * 100)}</span>
+            <span>{usd(byKey.get(k) ?? 0)}</span>
           </div>
         ))}
     </>
