@@ -12,11 +12,13 @@ import {
   type GroupsResponse,
   type ProjectCycles,
   type TimelineDimension,
+  type UserListEntry,
 } from "../api.js";
 import { CHART_MARGIN, COLORS, NEUTRAL_COLOR, Y_AXIS_WIDTH, wrapLabel, xAxisProps } from "../charts.js";
 import { bucketByCycle, snapBand, type ChartBucket } from "../cycles.js";
 import { bucketSeries, type Granularity } from "../series.js";
 import { useUrlParam } from "../url.js";
+import { buildFacets, EMAIL_FACET, isolateValue, mergeFilterSpecs, type FilterSpec } from "../filters.js";
 import { CycleRail } from "./CycleRail.js";
 import { NestedGroupsTable } from "./NestedGroupsTable.js";
 import { SortableTable, type Column } from "./SortableTable.js";
@@ -69,12 +71,21 @@ const GRANULARITIES: { key: Granularity; label: string }[] = [
   { key: "month", label: "Month" },
 ];
 
+/** One "Quick filter by" choice: a facet (timeline or CSV) and its values.
+ *  Timeline facets scope date-aware, via the server's `scope`/`scopeDimension`
+ *  params; CSV facets are a plain member-filter hide-all-but-one, merged into
+ *  this component's own `filter` query (see isolateValue/mergeFilterSpecs). */
+interface QuickFilterFacet {
+  id: string;
+  label: string;
+  values: string[];
+  kind: "timeline" | "csv";
+}
+
 /** Pivot the daily group×date rows into one row per bucket with a cost column per
  *  key, capping the stack at the top MAX_STACK_KEYS keys (by total cost) plus an
  *  "Other" catch-all. Unassigned always renders, last, regardless of rank. Buckets
- *  by day/week/month, or — when scoped to one project with cycles — by cycle.
- *  Takes explicit timeseries/keys (rather than the whole GroupsResponse) so the
- *  caller can choose the primary or secondary breakdown to chart. */
+ *  by day/week/month, or — when scoped to one project with cycles — by cycle. */
 function useStackedSeries(
   timeseries: GroupDayRow[],
   keys: string[],
@@ -105,14 +116,15 @@ function useStackedSeries(
 }
 
 export function GroupsView({ from, to, dimensions, timelineDimensions, projectCycles, filterQuery, onError }: Props) {
-  const [dimension, setDimension] = useUrlParam("groupBy", "");
-  const [secondaryRaw, setSecondary] = useUrlParam("secondary", "");
+  const [dimension, setDimension] = useUrlParam("groupBy", ""); // "Stacking by"
+  const [secondaryRaw, setSecondary] = useUrlParam("secondary", ""); // table-only drill-down
   const [product, setProduct] = useUrlParam("product", "");
-  const [scopeValue, setScopeValue] = useUrlParam("scope", "");
+  const [qfRaw, setQf] = useUrlParam("qf", ""); // "Quick filter by", encoded "facetId::value"
   const [metricKey, setMetricKey] = useUrlParam("metric", String(METRICS[0]!.key));
   const [sortOrderRaw, setSortOrder] = useUrlParam("sort", "size");
   const [bucketRaw, setBucket] = useUrlParam("granularity", "week");
   const [showCyclesRaw, setShowCycles] = useUrlParam("cycles", "1");
+  const [users, setUsers] = useState<UserListEntry[]>([]);
   const [data, setData] = useState<GroupsResponse | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -120,29 +132,64 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
   const sortOrder: SortOrder = sortOrderRaw === "alpha" ? "alpha" : "size";
   const showCycles = showCyclesRaw !== "0";
 
-  // Which timeline facet the scope dropdown narrows: whatever the primary
-  // Group By resolves to (Project/Team/Client), else "@project" as the default
-  // (e.g. when grouping by a CSV column or Member) — Cycle definitions are
-  // always project-specific regardless of which facet is actually scoped.
-  const scopeFacetDim = useMemo(
-    () => timelineDimensions.find((d) => d.id === dimension) ?? timelineDimensions.find((d) => d.id === "@project"),
-    [timelineDimensions, dimension],
-  );
-  const scopeLabel = scopeFacetDim?.label ?? "Project";
-  const scopeOptions = useMemo(
-    () => (scopeFacetDim?.values ?? []).filter((v) => v !== UNASSIGNED_KEY),
-    [scopeFacetDim],
-  );
-
-  // Reset the scope pick if it's not valid for the (possibly just-changed) facet —
-  // e.g. switching Group By from Project to Team invalidates a picked project name.
+  // The member list (for CSV facet values) — same source the Filter menu uses.
   useEffect(() => {
-    if (scopeValue && !scopeOptions.includes(scopeValue)) setScopeValue("", true);
-  }, [scopeOptions, scopeValue, setScopeValue]);
+    api.users().then((r) => setUsers(r.users)).catch(() => setUsers([]));
+  }, []);
 
-  // Secondary (drill-down) breakdown options: every Group By choice, plus the
-  // always-available Member dimension, minus whichever is currently primary
-  // (grouping by the same thing twice is meaningless).
+  // Every facet "Quick filter by" can narrow to a single value of: the timeline
+  // facets (Project/Team/Client) and every CSV column, each with its distinct values.
+  const quickFilterFacets: QuickFilterFacet[] = useMemo(() => {
+    const timeline: QuickFilterFacet[] = timelineDimensions.map((d) => ({
+      id: d.id,
+      label: d.label,
+      values: d.values.filter((v) => v !== UNASSIGNED_KEY),
+      kind: "timeline",
+    }));
+    const csv: QuickFilterFacet[] = buildFacets(users, dimensions)
+      .filter((f) => f.key !== EMAIL_FACET)
+      .map((f) => ({ id: f.key, label: f.label, values: f.values, kind: "csv" }));
+    return [...timeline, ...csv];
+  }, [timelineDimensions, dimensions, users]);
+
+  const quickFilter = useMemo(() => {
+    const idx = qfRaw.indexOf("::");
+    if (idx === -1) return null;
+    const facetId = qfRaw.slice(0, idx);
+    const value = qfRaw.slice(idx + 2);
+    const facet = quickFilterFacets.find((f) => f.id === facetId);
+    if (!facet || !facet.values.includes(value)) return null;
+    return { ...facet, value };
+  }, [qfRaw, quickFilterFacets]);
+
+  // Reset an invalid pick (e.g. the facet's value list changed) once facets have
+  // actually loaded — don't clear a persisted URL pick just because data is still loading.
+  useEffect(() => {
+    if (qfRaw && quickFilterFacets.length > 0 && !quickFilter) setQf("", true);
+  }, [qfRaw, quickFilterFacets.length, quickFilter, setQf]);
+
+  // Timeline quick filters go through the server's date-aware `scope`/`scopeDimension`
+  // (correctly split across concurrent memberships); CSV quick filters are a plain
+  // "hide every other value" merged into this component's own filter query.
+  const scopeValue = quickFilter?.kind === "timeline" ? quickFilter.value : undefined;
+  const scopeDimension = quickFilter?.kind === "timeline" ? quickFilter.id : undefined;
+  const effectiveFilterQuery = useMemo(() => {
+    if (!quickFilter || quickFilter.kind === "timeline") return filterQuery;
+    let base: FilterSpec | null = null;
+    if (filterQuery) {
+      try {
+        base = JSON.parse(filterQuery) as FilterSpec;
+      } catch {
+        base = null;
+      }
+    }
+    const merged = mergeFilterSpecs(base, isolateValue(quickFilter.id, quickFilter.values, quickFilter.value));
+    return merged ? JSON.stringify(merged) : undefined;
+  }, [filterQuery, quickFilter]);
+
+  // Secondary (table drill-down) options: every dimension the table could group
+  // by, minus whichever is currently "Stacking by" (grouping by the same thing
+  // twice is meaningless). Doesn't affect the chart — see NestedGroupsTable.
   const secondaryOptions = useMemo(() => {
     const all = [
       ...timelineDimensions.map((d) => ({ id: d.id, label: d.label })),
@@ -158,9 +205,9 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
     [projectCycles],
   );
 
-  // Default Group By once dimensions load (unless a URL/previous pick is still valid):
-  // prefer the first timeline facet (Project) when a projects file is loaded, else the
-  // first CSV column.
+  // Default "Stacking by" once dimensions load (unless a URL/previous pick is still
+  // valid): prefer the first timeline facet (Project) when a projects file is
+  // loaded, else the first CSV column.
   useEffect(() => {
     const timelineIds = timelineDimensions.map((d) => d.id);
     if (timelineIds.includes(dimension) || dimensions.includes(dimension)) return;
@@ -174,33 +221,34 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
     onError(null);
     try {
       setData(
-        await api.groups(
+        await api.groups({
           dimension,
-          from || undefined,
-          to || undefined,
-          product || undefined,
-          filterQuery,
-          scopeValue || undefined,
-          secondary || undefined,
-        ),
+          from: from || undefined,
+          to: to || undefined,
+          product: product || undefined,
+          filter: effectiveFilterQuery,
+          scope: scopeValue,
+          scopeDimension,
+          secondary: secondary || undefined,
+        }),
       );
     } catch (e) {
       onError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, [dimension, product, scopeValue, secondary, from, to, filterQuery, onError]);
+  }, [dimension, product, effectiveFilterQuery, scopeValue, scopeDimension, secondary, from, to, onError]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
   // The PROJECT this chart is effectively scoped to, for Cycle purposes (cycles
-  // are always project-specific): an explicit pick from the scope dropdown when
-  // it's currently scoped BY project, else — regardless of what narrowed it
-  // (a Team/Client scope pick, or the member filter) — whichever single project
-  // is the only one left active. Never auto-selects Cycle granularity, only offers it.
-  const explicitProject = scopeFacetDim?.id === "@project" ? scopeValue : "";
+  // are always project-specific): an explicit Quick-filter-by-Project pick, else
+  // — regardless of what narrowed it (a Team/Client/CSV quick filter, or the
+  // member filter) — whichever single project is the only one left active.
+  // Never auto-selects Cycle granularity, only offers it.
+  const explicitProject = quickFilter?.kind === "timeline" && quickFilter.id === "@project" ? quickFilter.value : "";
   const scopeProject = explicitProject || (data?.activeProjects.length === 1 ? data.activeProjects[0]! : null);
   const scopeIsInferred = !explicitProject && Boolean(scopeProject);
   const scopeCycles = scopeProject ? cyclesForProject(scopeProject) : [];
@@ -220,11 +268,9 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
   }, [data, sortOrder, metric.key]);
 
   const chartData = orderedGroups.map((g) => ({ name: g.key, value: Number(g[metric.key]) }));
-  // Chart stacks by the secondary dimension when one is set (e.g. Group by
-  // Team, Secondary by Member -> the chart stacks by member), else the primary.
-  const chartTimeseries = data?.secondaryDimension ? data.secondaryTimeseries : data?.timeseries ?? [];
-  const chartKeys = data?.secondaryDimension ? data.secondaryKeys : data?.keys ?? [];
-  const stacked = useStackedSeries(chartTimeseries, chartKeys, bucket, scopeCycles);
+  // The chart always stacks by "Stacking by" (the primary dimension) — the
+  // table's Secondary drill-down doesn't touch it.
+  const stacked = useStackedSeries(data?.timeseries ?? [], data?.keys ?? [], bucket, scopeCycles);
   const stackColor = useMemo(() => {
     const colorByKey = new Map<string, string>();
     let i = 0;
@@ -253,7 +299,7 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
     <div className="panel">
       <div className="row" style={{ marginBottom: 16 }}>
         <div>
-          <label>Group by</label>
+          <label>Stacking by</label>
           <select value={dimension} onChange={(e) => setDimension(e.target.value)}>
             {dimensions.length === 0 && timelineDimensions.length === 0 && (
               <option value="">— no CSV or projects file loaded —</option>
@@ -274,24 +320,17 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
             )}
           </select>
         </div>
-        {secondaryOptions.length > 0 && (
+        {quickFilterFacets.length > 0 && (
           <div>
-            <label>Secondary group by</label>
-            <select value={secondary} onChange={(e) => setSecondary(e.target.value)}>
+            <label>Quick filter by</label>
+            <select value={qfRaw} onChange={(e) => setQf(e.target.value)}>
               <option value="">None</option>
-              {secondaryOptions.map((d) => (
-                <option key={d.id} value={d.id}>{d.label}</option>
-              ))}
-            </select>
-          </div>
-        )}
-        {scopeOptions.length > 0 && (
-          <div>
-            <label>{scopeLabel}</label>
-            <select value={scopeValue} onChange={(e) => setScopeValue(e.target.value)}>
-              <option value="">All {scopeLabel.toLowerCase()}s</option>
-              {scopeOptions.map((v) => (
-                <option key={v} value={v}>{v}</option>
+              {quickFilterFacets.map((f) => (
+                <optgroup label={f.label} key={f.id}>
+                  {f.values.map((v) => (
+                    <option key={`${f.id}::${v}`} value={`${f.id}::${v}`}>{v}</option>
+                  ))}
+                </optgroup>
               ))}
             </select>
           </div>
@@ -320,10 +359,10 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
             <option value="alpha">Name (A–Z)</option>
           </select>
         </div>
-        <a href={api.exportUrl(dimension, from || undefined, to || undefined, product || undefined, filterQuery, scopeValue || undefined)}>
+        <a href={api.exportUrl({ dimension, from: from || undefined, to: to || undefined, product: product || undefined, filter: effectiveFilterQuery, scope: scopeValue, scopeDimension })}>
           <button className="secondary" type="button">Export CSV</button>
         </a>
-        <a href={api.exportGroupsDailyUrl(dimension, from || undefined, to || undefined, product || undefined, filterQuery, scopeValue || undefined)}>
+        <a href={api.exportGroupsDailyUrl({ dimension, from: from || undefined, to: to || undefined, product: product || undefined, filter: effectiveFilterQuery, scope: scopeValue, scopeDimension })}>
           <button className="secondary" type="button">Export daily CSV</button>
         </a>
       </div>
@@ -340,9 +379,7 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
       {data && stacked.rows.length > 0 && (
         <div style={{ marginBottom: 20 }}>
           <div className="row" style={{ marginBottom: 8, alignItems: "center" }}>
-            <h3 style={{ margin: 0 }}>
-              Cost over time{data?.secondaryDimension ? ` (by ${secondaryLabel})` : ""}
-            </h3>
+            <h3 style={{ margin: 0 }}>Cost over time</h3>
             <div className="segmented" role="group" aria-label="Granularity">
               {GRANULARITIES.map((g) => (
                 <button
@@ -442,6 +479,26 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
               </BarChart>
             </ResponsiveContainer>
           </div>
+
+          {secondaryOptions.length > 0 && (
+            <div className="row" style={{ marginBottom: 8, alignItems: "center" }}>
+              <div>
+                <label>Table breakdown by</label>
+                <select value={secondary} onChange={(e) => setSecondary(e.target.value)}>
+                  <option value="">None</option>
+                  {secondaryOptions.map((d) => (
+                    <option key={d.id} value={d.id}>{d.label}</option>
+                  ))}
+                </select>
+              </div>
+              {secondary && (
+                <p className="muted" style={{ margin: 0 }}>
+                  Expand a row below to see its breakdown by {secondaryLabel}.
+                </p>
+              )}
+            </div>
+          )}
+
           {data.secondaryDimension ? (
             <NestedGroupsTable
               columns={columns}
@@ -464,7 +521,7 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
         <p className="muted">No cached data for this range. Sync first.</p>
       )}
 
-      {data && !isTimelineDimension && !scopeValue && data.unmatchedCount > 0 && (
+      {data && !isTimelineDimension && !quickFilter && data.unmatchedCount > 0 && (
         <p className="muted" style={{ marginTop: 12 }}>
           {data.unmatchedCount} developer(s) in analytics have no CSV match (grouped as “(unmatched)”). Upload a CSV
           whose <code>email</code> column matches your org's emails to break these out.

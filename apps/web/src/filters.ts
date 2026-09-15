@@ -107,6 +107,32 @@ export function setFacetAll(spec: FilterSpec, facet: string, allValues: string[]
   return { hidden };
 }
 
+/** A FilterSpec that hides every value of `facet` except `value` — "quick filter
+ *  to just this one". Mirrors core's timelineScopeSpec, but works for any CSV
+ *  facet too (used for the Groups page's Quick filter by, when it isn't one of
+ *  Project/Team/Client — those go through the server's date-aware `scope`
+ *  param instead, since CSV facets have no concurrent-membership weighting). */
+export function isolateValue(facet: string, allValues: string[], value: string): FilterSpec {
+  return { hidden: { [facet]: allValues.filter((v) => v !== value) } };
+}
+
+/** Union two filter specs' hidden values per facet (hides AND across facets, so
+ *  unioning hidden sets intersects what's visible) — mirrors core's
+ *  mergeFilterSpecs, for combining the page's member filter with a Quick
+ *  filter by pick without needing the server to know about both separately. */
+export function mergeFilterSpecs(a: FilterSpec | null | undefined, b: FilterSpec | null | undefined): FilterSpec | null {
+  if (isEmptyFilter(a)) return b ?? null;
+  if (isEmptyFilter(b)) return a ?? null;
+  const hidden: Record<string, string[]> = {};
+  for (const spec of [a!, b!]) {
+    for (const [facet, values] of Object.entries(spec.hidden)) {
+      if (!Array.isArray(values) || values.length === 0) continue;
+      hidden[facet] = [...new Set([...(hidden[facet] ?? []), ...values])];
+    }
+  }
+  return { hidden };
+}
+
 /** JSON for the `filter` query param, or undefined when the filter is empty. */
 export function filterToQuery(spec: FilterSpec | null | undefined): string | undefined {
   return isEmptyFilter(spec) ? undefined : JSON.stringify({ hidden: spec!.hidden });

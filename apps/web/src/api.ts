@@ -103,6 +103,21 @@ export interface GroupRowWithPrimary extends GroupRow {
   primaryKey: string;
 }
 
+/** Query for /api/groups, /api/export and /api/export/groups-daily. */
+export interface GroupsQuery {
+  dimension: Dimension; // "Stacking by"
+  from?: string;
+  to?: string;
+  product?: string;
+  filter?: string;
+  /** "Quick filter by" value, when its facet is a timeline dimension. */
+  scope?: string;
+  /** Which timeline facet `scope` belongs to (e.g. "@team") — independent of `dimension`. */
+  scopeDimension?: string;
+  /** The table's own secondary breakdown dimension (doesn't affect the chart). */
+  secondary?: string;
+}
+
 export interface GroupsResponse {
   dimension: string;
   product: string | null;
@@ -116,14 +131,11 @@ export interface GroupsResponse {
   activeProjects: string[];
   /** The resolved secondary dimension id, or null when none was requested. */
   secondaryDimension: string | null;
-  /** Each primary group's breakdown by the secondary dimension (flat; group by
-   *  `primaryKey` client-side). Empty unless a `secondary` param was sent. */
+  /** Each primary group's breakdown by the secondary dimension — a table-only
+   *  drill-down (flat; group by `primaryKey` client-side). Doesn't affect the
+   *  chart, which always stacks by the primary dimension. Empty unless a
+   *  `secondary` param was sent. */
   secondaryGroups: GroupRowWithPrimary[];
-  /** Daily cost/tokens per SECONDARY key (independent of the primary dimension) —
-   *  feeds the "Cost over time" chart, stacked by secondary, when one is set. */
-  secondaryTimeseries: GroupDayRow[];
-  /** Every key in `secondaryTimeseries`, ordered by total cost descending. */
-  secondaryKeys: string[];
   unmatchedCount: number;
 }
 
@@ -211,16 +223,19 @@ export const api = {
     }).then(json<{ ok: boolean; summaryDays: number; activityDays: number; userProductRows: number; orgProductRows: number }>),
   overview: (from?: string, to?: string, filter?: string) =>
     fetch(`/api/overview${qs({ from, to, filter })}`).then(json<Overview>),
-  groups: (
-    dimension: Dimension,
-    from?: string,
-    to?: string,
-    product?: string,
-    filter?: string,
-    scope?: string,
-    secondary?: string,
-  ) =>
-    fetch(`/api/groups${qs({ groupBy: dimension, from, to, product, filter, scope, secondary })}`).then(json<GroupsResponse>),
+  groups: (q: GroupsQuery) =>
+    fetch(
+      `/api/groups${qs({
+        groupBy: q.dimension,
+        from: q.from,
+        to: q.to,
+        product: q.product,
+        filter: q.filter,
+        scope: q.scope,
+        scopeDimension: q.scopeDimension,
+        secondary: q.secondary,
+      })}`,
+    ).then(json<GroupsResponse>),
   users: (from?: string, to?: string) => fetch(`/api/users${qs({ from, to })}`).then(json<{ users: UserListEntry[] }>),
   member: (email: string, from?: string, to?: string) =>
     fetch(`/api/members/${encodeURIComponent(email)}${qs({ from, to })}`).then(json<MemberSummary>),
@@ -236,10 +251,26 @@ export const api = {
       json<{ ok: boolean; projects: number; members: number; cycles: number; warnings: string[]; source: string }>,
     );
   },
-  exportUrl: (dimension: Dimension, from?: string, to?: string, product?: string, filter?: string, scope?: string) =>
-    `/api/export${qs({ groupBy: dimension, from, to, product, filter, scope })}`,
-  exportGroupsDailyUrl: (dimension: Dimension, from?: string, to?: string, product?: string, filter?: string, scope?: string) =>
-    `/api/export/groups-daily${qs({ groupBy: dimension, from, to, product, filter, scope })}`,
+  exportUrl: (q: GroupsQuery) =>
+    `/api/export${qs({
+      groupBy: q.dimension,
+      from: q.from,
+      to: q.to,
+      product: q.product,
+      filter: q.filter,
+      scope: q.scope,
+      scopeDimension: q.scopeDimension,
+    })}`,
+  exportGroupsDailyUrl: (q: GroupsQuery) =>
+    `/api/export/groups-daily${qs({
+      groupBy: q.dimension,
+      from: q.from,
+      to: q.to,
+      product: q.product,
+      filter: q.filter,
+      scope: q.scope,
+      scopeDimension: q.scopeDimension,
+    })}`,
   exportMembersUrl: (from?: string, to?: string, filter?: string) =>
     `/api/export/members${qs({ from, to, filter })}`,
   exportMembersLongUrl: (from?: string, to?: string, filter?: string) =>
