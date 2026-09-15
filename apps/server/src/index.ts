@@ -5,24 +5,52 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import {
-  aggregateByDimension,
+  activeFacetKeysInRange,
+  aggregateByKeyer,
+  aggregateByKeyerOverTime,
+  applyTimelineFilterToKeyer,
+  combineKeyers,
   attributesFor,
   buildOverview,
   buildOverviewFromUsers,
   createClient,
+  csvKeyer,
+  CYCLE_DIMENSION_ID,
+  cycleKeyer,
+  cyclesFor,
   dimensionsOf,
+  distinctFacetValues,
   fetchRange,
+  groupsDailyToCsv,
   groupsToCsv,
   isEmptyFilter,
   makeEmailFilter,
+  makeRowWeight,
+  MEMBER_DIMENSION_ID,
+  memberKeyer,
   membersDailyCost,
   membersDailyToCsv,
   membersDailyLongToCsv,
+  mergeFilterSpecs,
   parseAttributesCsv,
   parseFilterParam,
+  parseProjectsYaml,
+  timelineScopeSpec,
   resolveDimension,
+  resolveTimelineDimension,
+  splitCombinedKey,
+  scaleUserDayRow,
+  scaleUserProductRow,
   summarizeMember,
-  type Dimension,
+  timelineDimensionId,
+  timelineKeyer,
+  TIMELINE_DIMENSION_LABELS,
+  TIMELINE_FACETS,
+  UNASSIGNED_KEY,
+  type FilterSpec,
+  type GroupRow,
+  type RowKeyer,
+  type TimelineFacet,
 } from "@claude-analytics/core";
 import { AppState } from "./state.js";
 
@@ -30,17 +58,70 @@ const state = new AppState();
 const app = Fastify({ logger: true });
 await app.register(multipart);
 
-function asDimension(value: unknown): Dimension {
+/** A resolved Group By selection: its canonical id (CSV column name, or "@project" etc.) and keyer. */
+interface GroupSelector {
+  id: string;
+  keyer: RowKeyer;
+}
+
+/** One secondary-breakdown row: a normal GroupRow, keyed by the secondary
+ *  value, tagged with which primary group it belongs to. */
+type GroupRowWithPrimary = GroupRow & { primaryKey: string };
+
+/** Resolve a `groupBy`/`secondary` query value against the timeline facets
+ *  first, then the reserved Member dimension, then CSV columns. */
+function resolveGroupBy(value: unknown): GroupSelector {
+  const raw = String(value ?? "");
+  const facet = resolveTimelineDimension(raw);
+  if (facet) return { id: timelineDimensionId(facet), keyer: timelineKeyer(state.memberships, facet) };
+  if (raw.trim().toLowerCase() === MEMBER_DIMENSION_ID) return { id: MEMBER_DIMENSION_ID, keyer: memberKeyer() };
+
   const dims = dimensionsOf(state.attributes);
-  const dim = resolveDimension(state.attributes, String(value ?? ""));
-  if (!dim) {
-    throw new Error(
-      dims.length
-        ? `Invalid dimension "${value}". Available columns: ${dims.join(", ")}.`
-        : `No CSV loaded — upload one (with an "email" column) to group by attributes.`,
-    );
+  const dim = resolveDimension(state.attributes, raw);
+  if (dim) return { id: dim, keyer: csvKeyer(state.attributes, dim) };
+
+  const timelineIds = TIMELINE_FACETS.map(timelineDimensionId);
+  const available = [...timelineIds, MEMBER_DIMENSION_ID, ...dims];
+  throw new Error(
+    available.length
+      ? `Invalid dimension "${value}". Available: ${available.join(", ")}.`
+      : `No CSV or projects file loaded — upload one to group by attributes.`,
+  );
+}
+
+/**
+ * Resolve a `groupBy`/`secondary` value, additionally recognising the
+ * reserved Cycle dimension — which, unlike every other dimension, needs to
+ * know which ONE project is in scope before it can build a keyer (cycles are
+ * per-project). `activeProjects` is the same cost-desc, no-Unassigned list
+ * already computed for the Cycle-granularity chart's auto-unlock; requiring
+ * it to have settled to exactly one project here keeps both features
+ * consistent about what "in scope" means.
+ */
+function resolveDimensionKeyer(value: unknown, activeProjects: string[]): GroupSelector {
+  if (String(value ?? "").trim().toLowerCase() === CYCLE_DIMENSION_ID) {
+    if (activeProjects.length !== 1) {
+      throw new Error(
+        activeProjects.length === 0
+          ? "Cycle requires a single project in scope, but none has cost in range — pick one via Quick filter by."
+          : `Cycle requires a single project in scope — ${activeProjects.length} are currently active (${activeProjects.join(", ")}). Narrow further with Quick filter by.`,
+      );
+    }
+    return { id: CYCLE_DIMENSION_ID, keyer: cycleKeyer(cyclesFor(state.cycles, activeProjects[0]!)) };
   }
-  return dim;
+  return resolveGroupBy(value);
+}
+
+/** Projects with non-zero cost under the current scope/filter (cost-desc, no
+ *  Unassigned) — drives both the web UI's Cycle-granularity auto-unlock and
+ *  whether "Stacking by: Cycle" can be resolved (see resolveDimensionKeyer). */
+function activeProjectsFor(userProducts: ReturnType<typeof state.db.getUserProducts>, product: string | undefined, spec: FilterSpec | null): string[] {
+  if (state.memberships.size === 0) return [];
+  return aggregateByKeyerOverTime(
+    userProducts,
+    applyTimelineFilterToKeyer(timelineKeyer(state.memberships, "project"), "@project", state.memberships, spec),
+    product,
+  ).keys.filter((k) => k !== UNASSIGNED_KEY);
 }
 
 interface RangeQuery {
@@ -48,18 +129,103 @@ interface RangeQuery {
   to?: string;
 }
 
-/** Member predicate built from the optional `filter` query param. */
-function emailPredicate(raw: string | undefined): (email: string) => boolean {
-  return makeEmailFilter(state.attributes, parseFilterParam(raw));
+/** Member predicate (email-only, CSV facets + explicit email hides) built from the `filter` param. */
+function emailPredicate(spec: FilterSpec | null): (email: string) => boolean {
+  return makeEmailFilter(state.attributes, spec);
+}
+
+/**
+ * Which timeline facet the `scope` param narrows: `scopeDimension` when given
+ * (the "Quick filter by" control is independent of Group By/Stacking by), else
+ * whichever facet the current `groupBy` resolves to (back-compat), else
+ * "project" as the sensible default.
+ */
+function scopeFacetFor(scopeDimensionRaw: unknown, groupByRaw: unknown): TimelineFacet {
+  return (
+    resolveTimelineDimension(String(scopeDimensionRaw ?? "")) ??
+    resolveTimelineDimension(String(groupByRaw ?? "")) ??
+    "project"
+  );
+}
+
+/**
+ * Resolve a `scope` query value into a FilterSpec that hides every other
+ * value of the relevant facet (see scopeFacetFor/timelineScopeSpec), merged
+ * with the active member `filter` — union, not double-wrapping, so
+ * cross-facet scaling never applies twice. Throws on an unknown value.
+ */
+function resolveTimelineScope(
+  scopeValue: string | undefined,
+  scopeDimensionRaw: unknown,
+  groupByRaw: unknown,
+  filterSpec: FilterSpec | null,
+): FilterSpec | null {
+  if (!scopeValue) return filterSpec;
+  const facet = scopeFacetFor(scopeDimensionRaw, groupByRaw);
+  const known = distinctFacetValues(state.memberships, facet);
+  if (!known.includes(scopeValue)) {
+    throw new Error(`Unknown ${TIMELINE_DIMENSION_LABELS[facet]} "${scopeValue}". Available: ${known.join(", ")}.`);
+  }
+  return mergeFilterSpecs(filterSpec, timelineScopeSpec(state.memberships, facet, scopeValue));
+}
+
+/**
+ * Group-by-aware keyer: the CSV/timeline keyer for `selector`, with any hidden
+ * timeline values excluded per {@link applyTimelineFilterToKeyer}'s rules (same
+ * facet as the groupBy -> dropped outright; a different timeline facet ->
+ * scaled by that day's kept fraction). Used by /api/groups and /api/export.
+ */
+function filteredKeyer(selector: GroupSelector, spec: FilterSpec | null): RowKeyer {
+  return applyTimelineFilterToKeyer(selector.keyer, selector.id, state.memberships, spec);
+}
+
+/**
+ * Scale raw userProducts/userDays rows by a filter's per-row timeline weight —
+ * for contexts with no groupBy keyer to hide entries from (the overview,
+ * member exports). Rows already excluded by the email predicate should be
+ * filtered out first.
+ */
+function scaleRows<T extends { email: string; date: string }>(
+  rows: T[],
+  spec: FilterSpec | null,
+  scale: (r: T, weight: number) => T,
+): T[] {
+  const weightOf = makeRowWeight(state.memberships, spec);
+  const out: T[] = [];
+  for (const r of rows) {
+    const w = weightOf(r.email, r.date);
+    if (w > 0) out.push(scale(r, w));
+  }
+  return out;
 }
 
 app.get("/api/status", async () => {
   const range = state.db.dateRange();
+  const timelineDimensions = state.memberships.size
+    ? TIMELINE_FACETS.map((facet) => ({
+        id: timelineDimensionId(facet),
+        label: TIMELINE_DIMENSION_LABELS[facet],
+        values: distinctFacetValues(state.memberships, facet),
+      }))
+    : [];
+  // Static cycle definitions per project (only those that declared any), for the
+  // Groups page's Cycle granularity and the cycle annotations on all three tabs.
+  const projectNames = distinctFacetValues(state.memberships, "project").filter((p) => p !== UNASSIGNED_KEY);
+  const projectCycles = projectNames
+    .map((project) => ({ project, cycles: cyclesFor(state.cycles, project) }))
+    .filter((p) => p.cycles.length > 0);
   return {
     csvLoaded: state.attributes.size > 0,
     csvSource: state.csvSource,
     csvRows: state.attributes.size,
     dimensions: dimensionsOf(state.attributes),
+    projectsLoaded: state.memberships.size > 0,
+    projectsSource: state.projectsSource,
+    projectCount: state.projectCount,
+    projectWarnings: state.projectWarnings,
+    timelineDimensions,
+    projectCycles,
+    cycleCount: state.cycleCount,
     cachedDateRange: range,
     developerCount: state.db.distinctEmails().length,
     apiKeyConfigured: Boolean(state.config.apiKey),
@@ -85,42 +251,114 @@ app.get<{ Querystring: RangeQuery & { filter?: string } }>("/api/overview", asyn
   if (isEmptyFilter(spec)) {
     return { ...buildOverview(state.db.getSummaries(from, to), state.db.getOrgProducts(from, to)), filtered: false };
   }
-  // With a member filter active, rebuild cost/tokens/active-users from per-user rows.
-  const pred = makeEmailFilter(state.attributes, spec);
-  const userProducts = state.db.getUserProducts({ from, to }).filter((r) => pred(r.email));
-  const userDays = state.db.getUserDays({ from, to }).filter((r) => pred(r.email));
+  // With a member/timeline filter active, rebuild cost/tokens/active-users from
+  // per-user rows: drop rows for hidden emails outright, then shave off each
+  // remaining row's hidden-timeline share (see makeRowWeight).
+  const emailPred = emailPredicate(spec);
+  const userProducts = scaleRows(
+    state.db.getUserProducts({ from, to }).filter((r) => emailPred(r.email)),
+    spec,
+    scaleUserProductRow,
+  );
+  const userDays = scaleRows(
+    state.db.getUserDays({ from, to }).filter((r) => emailPred(r.email)),
+    spec,
+    scaleUserDayRow,
+  );
   return { ...buildOverviewFromUsers(userProducts, userDays), filtered: true };
 });
 
-app.get<{ Querystring: RangeQuery & { groupBy?: string; product?: string; filter?: string } }>(
-  "/api/groups",
-  async (req, reply) => {
-    let dimension: Dimension;
-    try {
-      dimension = asDimension(req.query.groupBy);
-    } catch (err) {
-      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
-    }
-    const { from, to, product, filter } = req.query;
-    const pred = emailPredicate(filter);
-    const groups = aggregateByDimension(
-      state.db.getUserProducts({ from, to }).filter((r) => pred(r.email)),
-      state.db.getUserDays({ from, to }).filter((r) => pred(r.email)),
-      state.attributes,
-      dimension,
-      product,
-    );
-    const emails = new Set(state.db.distinctEmails());
-    const unmatched = [...emails].filter((e) => !state.attributes.has(e));
-    return { dimension, product: product ?? null, groups, unmatchedCount: unmatched.length };
-  },
-);
+app.get<{
+  Querystring: RangeQuery & {
+    groupBy?: string;
+    secondary?: string;
+    product?: string;
+    filter?: string;
+    scope?: string;
+    scopeDimension?: string;
+  };
+}>("/api/groups", async (req, reply) => {
+  const { from, to, product } = req.query;
+  let spec: FilterSpec | null;
+  try {
+    spec = resolveTimelineScope(req.query.scope, req.query.scopeDimension, req.query.groupBy, parseFilterParam(req.query.filter));
+  } catch (err) {
+    return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+  }
+  const emailPred = emailPredicate(spec);
+  const userProducts = state.db.getUserProducts({ from, to }).filter((r) => emailPred(r.email));
+  const userDays = state.db.getUserDays({ from, to }).filter((r) => emailPred(r.email));
+  // Projects with non-zero cost under the current scope (cost-desc, no Unassigned) —
+  // drives the web UI's auto-unlock of Cycle granularity/bands when it settles to
+  // one, and (below) whether "Stacking by: Cycle" can be resolved at all.
+  const activeProjects = activeProjectsFor(userProducts, product, spec);
 
-app.get("/api/users", async () => {
+  let selector: GroupSelector;
+  let secondarySelector: GroupSelector | null = null;
+  try {
+    selector = resolveDimensionKeyer(req.query.groupBy, activeProjects);
+    if (req.query.secondary) secondarySelector = resolveDimensionKeyer(req.query.secondary, activeProjects);
+  } catch (err) {
+    return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+  }
+  const keyer = filteredKeyer(selector, spec);
+  const groups = aggregateByKeyer(userProducts, userDays, keyer, product);
+  const { rows: timeseries, keys } = aggregateByKeyerOverTime(userProducts, keyer, product);
+  const emails = new Set(state.db.distinctEmails());
+  const unmatched = [...emails].filter((e) => !state.attributes.has(e));
+  // A secondary (drill-down) breakdown of each primary group, for the totals
+  // table only — e.g. Stacking by Team, table's Secondary by Member, to expand
+  // a team's row and see who made it up. Doesn't touch the chart, which always
+  // stacks by the primary ("Stacking by") dimension. Filtered independently
+  // per dimension (via filteredKeyer) *before* combining, so
+  // applyTimelineFilterToKeyer's same-facet-as-groupBy logic still sees each
+  // keyer's own bare keys rather than a combined "primary<sep>secondary" string.
+  let secondaryDimension: string | null = null;
+  let secondaryGroups: (GroupRowWithPrimary)[] = [];
+  if (secondarySelector) {
+    const secondaryKeyer = filteredKeyer(secondarySelector, spec);
+    const nested = aggregateByKeyer(userProducts, userDays, combineKeyers(keyer, secondaryKeyer), product);
+    secondaryDimension = secondarySelector.id;
+    secondaryGroups = nested.map((g) => {
+      const { primary, secondary } = splitCombinedKey(g.key);
+      return { ...g, key: secondary, primaryKey: primary };
+    });
+  }
+  return {
+    dimension: selector.id,
+    product: product ?? null,
+    groups,
+    timeseries,
+    keys,
+    activeProjects,
+    secondaryDimension,
+    secondaryGroups,
+    unmatchedCount: unmatched.length,
+  };
+});
+
+app.get<{ Querystring: RangeQuery }>("/api/users", async (req) => {
+  const { from, to } = req.query;
+  // When a projects file is loaded, also report each user's approximate timeline
+  // group membership over the queried range (or the whole cache when unset), so
+  // the Members tab's filter can apply Project/Team/Client facets too. This is
+  // "did any membership overlap the range at all" — a list-membership convenience,
+  // not the day-by-day split used for cost (see makeRowWeight/applyTimelineFilterToKeyer).
+  const hasTimeline = state.memberships.size > 0;
+  const range = state.db.dateRange();
+  const rangeFrom = from ?? range?.min ?? "0000-01-01";
+  const rangeTo = to ?? range?.max ?? "9999-12-31";
   return {
     users: state.db.distinctEmails().map((email) => ({
       email,
       attributes: state.attributes.get(email) ?? null,
+      groups: hasTimeline
+        ? {
+            "@project": activeFacetKeysInRange(state.memberships, email, rangeFrom, rangeTo, "project"),
+            "@team": activeFacetKeysInRange(state.memberships, email, rangeFrom, rangeTo, "team"),
+            "@client": activeFacetKeysInRange(state.memberships, email, rangeFrom, rangeTo, "client"),
+          }
+        : undefined,
     })),
   };
 });
@@ -128,48 +366,95 @@ app.get("/api/users", async () => {
 app.get<{ Params: { email: string }; Querystring: RangeQuery }>("/api/members/:email", async (req) => {
   const email = decodeURIComponent(req.params.email).toLowerCase();
   const { from, to } = req.query;
-  return summarizeMember(
+  const summary = summarizeMember(
     state.db.getUserProducts({ from, to, email }),
     state.db.getUserDays({ from, to, email }),
     email,
     attributesFor(state.attributes, email),
   );
+  // Which project(s) this person overlapped with in range — lets the Members
+  // chart draw that project's cycles (bands if exactly one, else a lane per
+  // project). Same "overlap" approximation as /api/users; not used for money.
+  const range = state.db.dateRange();
+  const projects = state.memberships.size
+    ? activeFacetKeysInRange(state.memberships, email, from ?? range?.min ?? "0000-01-01", to ?? range?.max ?? "9999-12-31", "project").filter(
+        (p) => p !== UNASSIGNED_KEY,
+      )
+    : [];
+  return { ...summary, projects };
 });
 
-app.get<{ Querystring: RangeQuery & { groupBy?: string; product?: string; filter?: string } }>(
-  "/api/export",
-  async (req, reply) => {
-    let dimension: Dimension;
-    try {
-      dimension = asDimension(req.query.groupBy);
-    } catch (err) {
-      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
-    }
-    const { from, to, product, filter } = req.query;
-    const pred = emailPredicate(filter);
-    const groups = aggregateByDimension(
-      state.db.getUserProducts({ from, to }).filter((r) => pred(r.email)),
-      state.db.getUserDays({ from, to }).filter((r) => pred(r.email)),
-      state.attributes,
-      dimension,
-      product,
-    );
-    return reply
-      .header("Content-Type", "text/csv")
-      .header("Content-Disposition", `attachment; filename="by-${dimension}.csv"`)
-      .send(groupsToCsv(groups, dimension));
-  },
-);
+app.get<{
+  Querystring: RangeQuery & { groupBy?: string; product?: string; filter?: string; scope?: string; scopeDimension?: string };
+}>("/api/export", async (req, reply) => {
+  const { from, to, product } = req.query;
+  let spec: FilterSpec | null;
+  try {
+    spec = resolveTimelineScope(req.query.scope, req.query.scopeDimension, req.query.groupBy, parseFilterParam(req.query.filter));
+  } catch (err) {
+    return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+  }
+  const emailPred = emailPredicate(spec);
+  const userProducts = state.db.getUserProducts({ from, to }).filter((r) => emailPred(r.email));
+  const userDays = state.db.getUserDays({ from, to }).filter((r) => emailPred(r.email));
+  const activeProjects = activeProjectsFor(userProducts, product, spec);
+
+  let selector: GroupSelector;
+  try {
+    selector = resolveDimensionKeyer(req.query.groupBy, activeProjects);
+  } catch (err) {
+    return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+  }
+  const keyer = filteredKeyer(selector, spec);
+  const groups = aggregateByKeyer(userProducts, userDays, keyer, product);
+  return reply
+    .header("Content-Type", "text/csv")
+    .header("Content-Disposition", `attachment; filename="by-${selector.id.replace(/^@/, "")}.csv"`)
+    .send(groupsToCsv(groups, selector.id));
+});
+
+app.get<{
+  Querystring: RangeQuery & { groupBy?: string; product?: string; filter?: string; scope?: string; scopeDimension?: string };
+}>("/api/export/groups-daily", async (req, reply) => {
+  const { from, to, product } = req.query;
+  let spec: FilterSpec | null;
+  try {
+    spec = resolveTimelineScope(req.query.scope, req.query.scopeDimension, req.query.groupBy, parseFilterParam(req.query.filter));
+  } catch (err) {
+    return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+  }
+  const emailPred = emailPredicate(spec);
+  const userProducts = state.db.getUserProducts({ from, to }).filter((r) => emailPred(r.email));
+  const activeProjects = activeProjectsFor(userProducts, product, spec);
+
+  let selector: GroupSelector;
+  try {
+    selector = resolveDimensionKeyer(req.query.groupBy, activeProjects);
+  } catch (err) {
+    return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+  }
+  const keyer = filteredKeyer(selector, spec);
+  const { rows } = aggregateByKeyerOverTime(userProducts, keyer, product);
+  return reply
+    .header("Content-Type", "text/csv")
+    .header("Content-Disposition", `attachment; filename="by-${selector.id.replace(/^@/, "")}-daily.csv"`)
+    .send(groupsDailyToCsv(rows, selector.id));
+});
 
 app.get<{ Querystring: RangeQuery & { filter?: string } }>(
   "/api/export/members",
   async (req, reply) => {
     const { from, to, filter } = req.query;
-    const pred = emailPredicate(filter);
-    const userProducts = state.db.getUserProducts({ from, to }).filter((r) => pred(r.email));
+    const spec = parseFilterParam(filter);
+    const emailPred = emailPredicate(spec);
+    const userProducts = scaleRows(
+      state.db.getUserProducts({ from, to }).filter((r) => emailPred(r.email)),
+      spec,
+      scaleUserProductRow,
+    );
     // Population is everyone Claude knows about (analytics emails); CSV attributes
     // are joined where they match and left blank where they don't.
-    const emails = state.db.distinctEmails().filter((email) => pred(email));
+    const emails = state.db.distinctEmails().filter((email) => emailPred(email));
     const { rows, dates } = membersDailyCost(userProducts, state.attributes, emails);
     return reply
       .header("Content-Type", "text/csv")
@@ -182,9 +467,14 @@ app.get<{ Querystring: RangeQuery & { filter?: string } }>(
   "/api/export/members-long",
   async (req, reply) => {
     const { from, to, filter } = req.query;
-    const pred = emailPredicate(filter);
-    const userProducts = state.db.getUserProducts({ from, to }).filter((r) => pred(r.email));
-    const emails = state.db.distinctEmails().filter((email) => pred(email));
+    const spec = parseFilterParam(filter);
+    const emailPred = emailPredicate(spec);
+    const userProducts = scaleRows(
+      state.db.getUserProducts({ from, to }).filter((r) => emailPred(r.email)),
+      spec,
+      scaleUserProductRow,
+    );
+    const emails = state.db.distinctEmails().filter((email) => emailPred(email));
     const { rows, dates } = membersDailyCost(userProducts, state.attributes, emails);
     return reply
       .header("Content-Type", "text/csv")
@@ -201,6 +491,26 @@ app.post("/api/csv", async (req, reply) => {
     const { attributes, count } = parseAttributesCsv(text);
     state.setAttributes(attributes, `upload: ${file.filename} (${count} rows)`);
     return { ok: true, rows: count, source: state.csvSource };
+  } catch (err) {
+    return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+app.post("/api/projects", async (req, reply) => {
+  const file = await req.file();
+  if (!file) return reply.code(400).send({ error: "No file uploaded (field name: 'file')." });
+  const text = (await file.toBuffer()).toString("utf8");
+  try {
+    const result = parseProjectsYaml(text);
+    state.setProjects(result, `upload: ${file.filename} (${result.projectCount} project(s))`);
+    return {
+      ok: true,
+      projects: result.projectCount,
+      members: result.memberCount,
+      cycles: result.cycleCount,
+      warnings: result.warnings,
+      source: state.projectsSource,
+    };
   } catch (err) {
     return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
   }

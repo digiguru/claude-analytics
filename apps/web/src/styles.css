@@ -435,3 +435,172 @@ button.link {
   padding-top: 8px;
   padding-bottom: 8px;
 }
+
+/* ---- cycle annotation: the per-project lane strip below a time chart ---- */
+
+.cycle-rail {
+  margin-top: 4px;
+}
+
+.cycle-rail-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.cycle-rail-label {
+  flex: 0 0 120px;
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cycle-rail-track {
+  flex: 1;
+  display: grid;
+  gap: 2px;
+  padding-left: 50px; /* match charts.tsx PLOT_LEFT (Y_AXIS_WIDTH + margin.left) */
+  padding-right: 12px; /* match charts.tsx PLOT_RIGHT (margin.right) */
+}
+
+.cycle-chip {
+  display: block;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 500;
+  color: #11141a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.85;
+}
+
+.cycle-rail-more {
+  margin: 4px 0 0;
+}
+
+/* ---- variable-width bar chart (Cycle granularity: width = days, height = value) ---- */
+
+.varwidth-chart {
+  width: 100%;
+}
+
+.varwidth-plot {
+  display: flex;
+  position: relative;
+}
+
+.varwidth-yaxis {
+  flex: 0 0 50px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding-right: 8px;
+  box-sizing: border-box;
+}
+
+.varwidth-ytick {
+  font-size: 11px;
+  color: var(--muted);
+  transform: translateY(50%);
+}
+
+.varwidth-bars {
+  flex: 1;
+  display: flex;
+  position: relative;
+  border-left: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.varwidth-gridline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-top: 1px dashed #2a2f3a;
+}
+
+.varwidth-bar {
+  position: relative;
+  height: 100%;
+  box-sizing: border-box;
+  border-right: 1px solid var(--bg);
+  min-width: 1px;
+}
+
+.varwidth-stack {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column-reverse;
+}
+
+.varwidth-segment {
+  width: 100%;
+  cursor: pointer;
+  transition: opacity 0.1s;
+}
+
+.varwidth-tooltip {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+  white-space: nowrap;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.varwidth-xaxis {
+  display: flex;
+  margin-top: 6px;
+}
+
+.varwidth-xlabel {
+  box-sizing: border-box;
+  border-right: 1px solid transparent;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text);
+  line-height: 1.3;
+  padding: 0 2px;
+  overflow: hidden;
+}
+
+.varwidth-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 10px;
+  padding-left: 50px; /* align under the plot, past the y-axis gutter */
+}
+
+.varwidth-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.varwidth-legend-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex: 0 0 auto;
+}

@@ -14,5 +14,9 @@ data/
 /private-*.csv
 export.csv
 
+# the user's real projects/teams file (projects.sample.yaml is fine to keep)
+/config/projects.yaml
+/config/*-info.txt
+
 .DS_Store
 *.log

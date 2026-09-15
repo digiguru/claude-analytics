@@ -1,6 +1,6 @@
 // Client-side filter model. Mirrors the server's makeEmailFilter semantics so the
 // member list filters identically to the aggregated views.
-import type { Attributes, UserListEntry } from "./api.js";
+import type { Attributes, TimelineDimension, UserListEntry } from "./api.js";
 
 /** Special facet for filtering on individual member emails. Matches core's EMAIL_FACET. */
 export const EMAIL_FACET = "__email__";
@@ -44,13 +44,20 @@ export function valueFor(attrs: Attributes | null, dimension: string): string {
   return BLANK_KEY;
 }
 
-/** Build the facet list (one per CSV dimension, plus a Member-email facet) from the user list. */
-export function buildFacets(users: UserListEntry[], dimensions: string[]): Facet[] {
+/** Build the facet list (CSV dimensions, timeline dimensions, plus a Member-email
+ *  facet) from the user list. Timeline facet values come pre-computed from the
+ *  server (every group that exists), not derived per-user like CSV facets. */
+export function buildFacets(
+  users: UserListEntry[],
+  dimensions: string[],
+  timelineDimensions: TimelineDimension[] = [],
+): Facet[] {
   const facets: Facet[] = dimensions.map((dim) => {
     const values = new Set<string>();
     for (const u of users) values.add(valueFor(u.attributes, dim));
     return { key: dim, label: dim, values: [...values].sort((a, b) => a.localeCompare(b)) };
   });
+  for (const t of timelineDimensions) facets.push({ key: t.id, label: t.label, values: t.values });
   facets.push({
     key: EMAIL_FACET,
     label: "Member (email)",
@@ -59,7 +66,12 @@ export function buildFacets(users: UserListEntry[], dimensions: string[]): Facet
   return facets;
 }
 
-/** Does a user pass the filter? (true = visible). Mirrors core's makeEmailFilter. */
+/**
+ * Does a user pass the filter? (true = visible). Mirrors core's makeEmailFilter
+ * for CSV facets; for timeline facets ("@project" etc.) a user passes unless
+ * EVERY group they overlapped with in range is hidden — see `user.groups`
+ * (activeFacetKeysInRange in core) for the "overlap" approximation this uses.
+ */
 export function userPasses(spec: FilterSpec | null | undefined, user: UserListEntry): boolean {
   if (isEmptyFilter(spec)) return true;
   const hidden = spec!.hidden;
@@ -67,6 +79,11 @@ export function userPasses(spec: FilterSpec | null | undefined, user: UserListEn
   if (emailHidden && emailHidden.includes(user.email)) return false;
   for (const [facet, values] of Object.entries(hidden)) {
     if (facet === EMAIL_FACET || !values?.length) continue;
+    if (facet.startsWith("@")) {
+      const groups = user.groups?.[facet] ?? [];
+      if (groups.length > 0 && groups.every((g) => values.includes(g))) return false;
+      continue;
+    }
     if (values.includes(valueFor(user.attributes, facet))) return false;
   }
   return true;
@@ -87,6 +104,32 @@ export function setFacetAll(spec: FilterSpec, facet: string, allValues: string[]
   const hidden = { ...spec.hidden };
   if (hideAll) hidden[facet] = [...allValues];
   else delete hidden[facet];
+  return { hidden };
+}
+
+/** A FilterSpec that hides every value of `facet` except `value` — "quick filter
+ *  to just this one". Mirrors core's timelineScopeSpec, but works for any CSV
+ *  facet too (used for the Groups page's Quick filter by, when it isn't one of
+ *  Project/Team/Client — those go through the server's date-aware `scope`
+ *  param instead, since CSV facets have no concurrent-membership weighting). */
+export function isolateValue(facet: string, allValues: string[], value: string): FilterSpec {
+  return { hidden: { [facet]: allValues.filter((v) => v !== value) } };
+}
+
+/** Union two filter specs' hidden values per facet (hides AND across facets, so
+ *  unioning hidden sets intersects what's visible) — mirrors core's
+ *  mergeFilterSpecs, for combining the page's member filter with a Quick
+ *  filter by pick without needing the server to know about both separately. */
+export function mergeFilterSpecs(a: FilterSpec | null | undefined, b: FilterSpec | null | undefined): FilterSpec | null {
+  if (isEmptyFilter(a)) return b ?? null;
+  if (isEmptyFilter(b)) return a ?? null;
+  const hidden: Record<string, string[]> = {};
+  for (const spec of [a!, b!]) {
+    for (const [facet, values] of Object.entries(spec.hidden)) {
+      if (!Array.isArray(values) || values.length === 0) continue;
+      hidden[facet] = [...new Set([...(hidden[facet] ?? []), ...values])];
+    }
+  }
   return { hidden };
 }
 

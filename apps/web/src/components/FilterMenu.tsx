@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, type UserListEntry } from "../api.js";
+import { api, type TimelineDimension, type UserListEntry } from "../api.js";
 import {
   buildFacets,
   EMPTY_FILTER,
@@ -17,12 +17,15 @@ import {
 
 interface Props {
   dimensions: string[];
+  timelineDimensions: TimelineDimension[];
   csvLoaded: boolean;
+  from: string;
+  to: string;
   filter: FilterSpec;
   onChange: (spec: FilterSpec) => void;
 }
 
-export function FilterMenu({ dimensions, csvLoaded, filter, onChange }: Props) {
+export function FilterMenu({ dimensions, timelineDimensions, csvLoaded, from, to, filter, onChange }: Props) {
   const [open, setOpen] = useState(false);
   const [users, setUsers] = useState<UserListEntry[]>([]);
   const [saved, setSaved] = useState<SavedFilter[]>(() => loadSavedFilters());
@@ -30,12 +33,14 @@ export function FilterMenu({ dimensions, csvLoaded, filter, onChange }: Props) {
   const [saveName, setSaveName] = useState("");
   const popRef = useRef<HTMLDivElement>(null);
 
-  // The member list (with attributes) is the source for every facet's values.
+  // The member list (with attributes, and — when a projects file is loaded —
+  // each person's timeline group membership over the current range) is the
+  // source for every facet's values.
   useEffect(() => {
-    api.users().then((r) => setUsers(r.users)).catch(() => setUsers([]));
-  }, [csvLoaded]);
+    api.users(from || undefined, to || undefined).then((r) => setUsers(r.users)).catch(() => setUsers([]));
+  }, [csvLoaded, from, to]);
 
-  const facets = useMemo(() => buildFacets(users, dimensions), [users, dimensions]);
+  const facets = useMemo(() => buildFacets(users, dimensions, timelineDimensions), [users, dimensions, timelineDimensions]);
 
   // Close on outside click.
   useEffect(() => {

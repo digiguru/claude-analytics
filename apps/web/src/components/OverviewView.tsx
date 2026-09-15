@@ -12,20 +12,21 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { api, tokens, usd, type Overview } from "../api.js";
-import { xAxisProps } from "../charts.js";
+import { api, tokens, usd, type Overview, type ProjectCycles } from "../api.js";
+import { CHART_MARGIN, COLORS, Y_AXIS_WIDTH, xAxisProps } from "../charts.js";
 import { bucketLabel, prepareSeries, type Granularity } from "../series.js";
+import { CycleRail } from "./CycleRail.js";
 import { SeriesControls } from "./SeriesControls.js";
 import { SortableTable, type Column } from "./SortableTable.js";
 
 interface Props {
   from: string;
   to: string;
+  projectCycles: ProjectCycles[];
   filterQuery?: string;
   onError: (msg: string | null) => void;
 }
 
-const COLORS = ["#d97757", "#5a6b8c", "#7fae7f", "#b08cc0", "#c0a96b", "#6b9bc0"];
 
 const productColumns: Column<Overview["productTotals"][number]>[] = [
   { key: "product", label: "Product", value: (r) => r.product },
@@ -34,7 +35,7 @@ const productColumns: Column<Overview["productTotals"][number]>[] = [
   { key: "requests", label: "Requests", numeric: true, value: (r) => r.requests },
 ];
 
-export function OverviewView({ from, to, filterQuery, onError }: Props) {
+export function OverviewView({ from, to, projectCycles, filterQuery, onError }: Props) {
   const [ov, setOv] = useState<Overview | null>(null);
   const [loading, setLoading] = useState(false);
   const [granularity, setGranularity] = useState<Granularity>("day");
@@ -132,11 +133,11 @@ export function OverviewView({ from, to, filterQuery, onError }: Props) {
       </div>
       <div style={{ height: 280, marginBottom: 20 }}>
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={chartData}>
+          <ComposedChart data={chartData} margin={CHART_MARGIN}>
             <CartesianGrid strokeDasharray="3 3" stroke="#2a2f3a" />
             <XAxis dataKey="date" stroke="#9aa3b2" fontSize={11} {...xAxisProps(chartData.length, 10, { rotateWhenShort: true })} />
-            <YAxis yAxisId="l" stroke="#d97757" fontSize={11} />
-            <YAxis yAxisId="r" orientation="right" stroke="#5a6b8c" fontSize={11} />
+            <YAxis yAxisId="l" stroke="#d97757" fontSize={11} width={Y_AXIS_WIDTH} />
+            <YAxis yAxisId="r" orientation="right" stroke="#5a6b8c" fontSize={11} width={Y_AXIS_WIDTH} />
             <Tooltip contentStyle={{ background: "#1a1d24", border: "1px solid #2a2f3a" }} formatter={(v: number, n) => (typeof n === "string" && n.startsWith("cost") ? `$${Number(v).toFixed(2)}` : v)} />
             <Legend />
             <Bar yAxisId="l" dataKey="cost" name="cost ($)" fill="#d97757" />
@@ -147,6 +148,15 @@ export function OverviewView({ from, to, filterQuery, onError }: Props) {
           </ComposedChart>
         </ResponsiveContainer>
       </div>
+      {projectCycles.length > 0 && (
+        <CycleRail
+          labels={chartData.map((r) => String(r.date))}
+          projects={projectCycles}
+          granularity={granularity}
+          dualAxis
+          moreCount={Math.max(0, projectCycles.length - 3)}
+        />
+      )}
 
       <div className="grid-2">
         <div>
