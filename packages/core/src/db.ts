@@ -207,9 +207,19 @@ export class MetricsDb {
     }));
   }
 
-  getUserDays(opts: { from?: string; to?: string; email?: string } = {}): UserDayRow[] {
+  /** Columns for a UserDayRow, excluding `raw_json` — the default, since nothing
+   *  in aggregate.ts/filter.ts/export.ts reads `.raw` and it's expensive to
+   *  reconstitute (one JSON.parse + discarded object per row). Pass
+   *  `includeRaw: true` (callers that actually want the raw per-day record) to
+   *  add it back. */
+  private static readonly USER_DAY_COLUMNS = `date, user_id, email, name, chat_messages, chat_conversations,
+    cc_sessions, cc_commits, cc_prs, cc_loc_added, cc_loc_removed, cc_tool_accepted, cc_tool_rejected,
+    cowork_messages, cowork_sessions, design_messages, office_messages, web_searches`;
+
+  getUserDays(opts: { from?: string; to?: string; email?: string; includeRaw?: boolean } = {}): UserDayRow[] {
     const { where, params } = this.dateClause(opts.from, opts.to);
-    let sql = `SELECT * FROM user_day ${where}`;
+    const columns = opts.includeRaw ? `${MetricsDb.USER_DAY_COLUMNS}, raw_json` : MetricsDb.USER_DAY_COLUMNS;
+    let sql = `SELECT ${columns} FROM user_day ${where}`;
     if (opts.email) {
       sql += where ? " AND email = @email" : " WHERE email = @email";
       params.email = opts.email.trim().toLowerCase();
@@ -234,7 +244,7 @@ export class MetricsDb {
       designMessages: r.design_messages as number,
       officeMessages: r.office_messages as number,
       webSearches: r.web_searches as number,
-      raw: JSON.parse(r.raw_json as string) as UserActivityRecord,
+      raw: opts.includeRaw ? (JSON.parse(r.raw_json as string) as UserActivityRecord) : undefined,
     }));
   }
 

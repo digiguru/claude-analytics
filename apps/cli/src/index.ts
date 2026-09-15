@@ -6,7 +6,6 @@ import {
   attributesFor,
   buildOverview,
   createClient,
-  csvKeyer,
   cyclesFor,
   dimensionsOf,
   fetchRange,
@@ -15,18 +14,17 @@ import {
   loadProjectsYaml,
   MetricsDb,
   rankUsers,
-  resolveDimension,
-  resolveTimelineDimension,
+  resolveGroupBy as coreResolveGroupBy,
   summarizeMember,
   timelineDimensionId,
-  timelineKeyer,
   TIMELINE_DIMENSION_LABELS,
   TIMELINE_FACETS,
+  MEMBER_DIMENSION_ID,
   type AttributeMap,
   type Attributes,
+  type GroupSelector,
   type MembershipIndex,
   type ProjectsParseResult,
-  type RowKeyer,
 } from "@claude-analytics/core";
 import { loadConfig } from "./config.js";
 
@@ -96,27 +94,19 @@ function loadProjectsOptional(override?: string): MembershipIndex {
 }
 
 
-interface GroupSelector {
-  id: string;
-  keyer: RowKeyer;
-}
-
-/** Resolve --group-by against the timeline facets (@project/@team/@client) first,
- *  then the columns actually present in the CSV, or exit. */
+/** Resolve --group-by against the shared core resolution order (timeline
+ *  facets, then @member, then CSV columns — see core's resolveGroupBy), or
+ *  print an error and exit. Per #28: this used to be an independently
+ *  drifted copy of the server's version that didn't recognise @member at
+ *  all; both apps now share one implementation and one set of supported
+ *  values. */
 function resolveGroupBy(attributes: AttributeMap, memberships: MembershipIndex, value: string): GroupSelector {
-  const facet = resolveTimelineDimension(value);
-  if (facet) return { id: timelineDimensionId(facet), keyer: timelineKeyer(memberships, facet) };
-
-  const dims = dimensionsOf(attributes);
-  const dim = resolveDimension(attributes, value);
-  if (dim) return { id: dim, keyer: csvKeyer(attributes, dim) };
-
-  const timelineIds = TIMELINE_FACETS.map(timelineDimensionId);
-  const available = [...timelineIds, ...dims];
-  if (available.length === 0) {
+  const result = coreResolveGroupBy(attributes, memberships, value);
+  if (result.ok) return result.selector;
+  if (result.available.length === 0) {
     console.error("No CSV attributes or projects file loaded. Pass --csv/--projects or set CSV_PATH/PROJECTS_PATH in .env.");
   } else {
-    console.error(`Invalid --group-by "${value}". Available: ${available.join(", ")}.`);
+    console.error(`Invalid --group-by "${result.invalidValue}". Available: ${result.available.join(", ")}.`);
   }
   process.exit(1);
 }
@@ -230,15 +220,16 @@ program
       console.log("\nTimeline (from your projects file):\n");
       for (const facet of TIMELINE_FACETS) console.log(`  - ${timelineDimensionId(facet)}  (${TIMELINE_DIMENSION_LABELS[facet]})`);
     }
+    console.log(`\n  - ${MEMBER_DIMENSION_ID}  (Member — always available, groups by raw email)`);
     if (dims.length === 0 && memberships.size === 0) {
-      console.log("No CSV attributes or projects file loaded. Pass --csv/--projects or set CSV_PATH/PROJECTS_PATH in .env.");
+      console.log("\nNo CSV attributes or projects file loaded. Pass --csv/--projects or set CSV_PATH/PROJECTS_PATH in .env.");
       return;
     }
     if (dims.length) {
       console.log(`\n${attributes.size} developer row(s). Group by any CSV column:\n`);
       for (const d of dims) console.log(`  - ${d}`);
     }
-    const example = memberships.size ? timelineDimensionId("project") : dims[0];
+    const example = memberships.size ? timelineDimensionId("project") : (dims[0] ?? MEMBER_DIMENSION_ID);
     console.log(`\ne.g. npm run cli -- group --group-by ${example}`);
   });
 

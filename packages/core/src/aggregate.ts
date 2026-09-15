@@ -1,6 +1,15 @@
-import type { AttributeMap } from "./csv.js";
+import { dimensionsOf, resolveDimension, type AttributeMap } from "./csv.js";
 import { groupKey } from "./join.js";
-import { membershipKeys, NO_CYCLE_KEY, type Cycle, type MembershipIndex, type TimelineFacet } from "./projects.js";
+import {
+  membershipKeys,
+  NO_CYCLE_KEY,
+  resolveTimelineDimension,
+  timelineDimensionId,
+  TIMELINE_FACETS,
+  type Cycle,
+  type MembershipIndex,
+  type TimelineFacet,
+} from "./projects.js";
 import type {
   Attributes,
   Dimension,
@@ -266,6 +275,48 @@ export const MEMBER_DIMENSION_LABEL = "Member";
 /** A keyer over the row's own email — weight always 1, ignores date. */
 export function memberKeyer(): RowKeyer {
   return (email) => [{ key: email, weight: 1 }];
+}
+
+/** A resolved Group By selection: its canonical id (a CSV column name, or a
+ *  reserved id like "@project"/"@member") and the keyer that implements it. */
+export interface GroupSelector {
+  id: string;
+  keyer: RowKeyer;
+}
+
+/**
+ * Result of resolving a Group By value: either a selector, or the raw
+ * ingredients for an error message (never a pre-rendered string) so each
+ * caller can phrase and surface the failure however fits it — the server
+ * throws (its routes already catch and 400 any error), the CLI prints to
+ * stderr and exits. See #28: this single function replaces what used to be
+ * two independently-drifted copies (the server additionally supported
+ * MEMBER_DIMENSION_ID; the CLI didn't) with one set of supported values.
+ */
+export type GroupByResolution =
+  | { ok: true; selector: GroupSelector }
+  | { ok: false; invalidValue: string; available: string[] };
+
+/**
+ * Resolve a `groupBy`/`secondary` value against, in order: the timeline facets
+ * (@project/@team/@client, only meaningful once a projects file is loaded),
+ * the reserved Member dimension (@member — always available), then the
+ * columns actually present in the loaded CSV.
+ */
+export function resolveGroupBy(attributes: AttributeMap, memberships: MembershipIndex, value: unknown): GroupByResolution {
+  const raw = String(value ?? "");
+  const facet = resolveTimelineDimension(raw);
+  if (facet) return { ok: true, selector: { id: timelineDimensionId(facet), keyer: timelineKeyer(memberships, facet) } };
+  if (raw.trim().toLowerCase() === MEMBER_DIMENSION_ID) {
+    return { ok: true, selector: { id: MEMBER_DIMENSION_ID, keyer: memberKeyer() } };
+  }
+
+  const dims = dimensionsOf(attributes);
+  const dim = resolveDimension(attributes, raw);
+  if (dim) return { ok: true, selector: { id: dim, keyer: csvKeyer(attributes, dim) } };
+
+  const timelineIds = TIMELINE_FACETS.map(timelineDimensionId);
+  return { ok: false, invalidValue: raw, available: [...timelineIds, MEMBER_DIMENSION_ID, ...dims] };
 }
 
 /** Separator joining a primary and secondary key into one combined key string —

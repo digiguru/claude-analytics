@@ -264,7 +264,10 @@ export interface UserDayRow {
   designMessages: number;
   officeMessages: number;
   webSearches: number;
-  raw: UserActivityRecord;
+  /** The raw per-day API record — expensive to reconstitute (one JSON.parse per
+   *  row) and unused by aggregate.ts/filter.ts/export.ts, so it's only present
+   *  when explicitly requested (see MetricsDb.getUserDays's includeRaw option). */
+  raw?: UserActivityRecord;
 }
 
 /** Per-user, per-day cost + tokens for one product. */
