@@ -407,13 +407,41 @@ export function cycleFor(cycles: CycleIndex, project: string, date: string): Cyc
   return null;
 }
 
+/** One active membership's normalised share of a person's day, carrying every
+ *  timeline facet's value together — since a membership is one project, which
+ *  has exactly one team and one client, these three are never independent. */
+export interface MembershipShare {
+  weight: number;
+  facets: Record<TimelineFacet, string>;
+}
+
 /**
- * Weighted group keys for one person on one day, for the given facet. Weights
- * are each membership's `allocation` normalised to sum to 1 across every
- * membership active that day (so a single active membership is always full
- * weight, however its `allocation` reads). No active membership -> Unassigned.
- * Memberships that collapse to the same key (e.g. two projects, one team)
- * have their weights merged so the key appears once.
+ * A person's active memberships on one day, each reduced to its normalised
+ * weight (allocation / total active allocation, so a single membership is
+ * always full weight) plus the project/team/client triple it maps to. The
+ * shared building block behind {@link membershipKeys} (single-facet view) and
+ * {@link combinedKeptWeight} (multi-facet exclusion, which needs to know that
+ * a project and its own team can refer to the very same slice of a day).
+ * No active membership -> a single Unassigned share covering the whole day.
+ */
+export function activeMembershipShares(index: MembershipIndex, email: string, date: string): MembershipShare[] {
+  const list = index.get(email.trim().toLowerCase());
+  const active = (list ?? []).filter((m) => m.start <= date && (m.end === null || date <= m.end));
+  if (active.length === 0) {
+    return [{ weight: 1, facets: { project: UNASSIGNED_KEY, team: UNASSIGNED_KEY, client: UNASSIGNED_KEY } }];
+  }
+  const totalAllocation = active.reduce((s, m) => s + m.allocation, 0) || 1;
+  return active.map((m) => ({
+    weight: m.allocation / totalAllocation,
+    facets: { project: m.project, team: m.team, client: m.client },
+  }));
+}
+
+/**
+ * Weighted group keys for one person on one day, for the given facet. No
+ * active membership -> Unassigned. Memberships that collapse to the same key
+ * (e.g. two projects, one team) have their weights merged so the key appears
+ * once.
  */
 export function membershipKeys(
   index: MembershipIndex,
@@ -421,19 +449,35 @@ export function membershipKeys(
   date: string,
   facet: TimelineFacet,
 ): { key: string; weight: number }[] {
-  const list = index.get(email.trim().toLowerCase());
-  if (!list || list.length === 0) return [{ key: UNASSIGNED_KEY, weight: 1 }];
-
-  const active = list.filter((m) => m.start <= date && (m.end === null || date <= m.end));
-  if (active.length === 0) return [{ key: UNASSIGNED_KEY, weight: 1 }];
-
-  const totalAllocation = active.reduce((s, m) => s + m.allocation, 0) || 1;
   const merged = new Map<string, number>();
-  for (const m of active) {
-    const key = m[facet];
-    merged.set(key, (merged.get(key) ?? 0) + m.allocation / totalAllocation);
+  for (const share of activeMembershipShares(index, email, date)) {
+    const key = share.facets[facet];
+    merged.set(key, (merged.get(key) ?? 0) + share.weight);
   }
   return [...merged.entries()].map(([key, weight]) => ({ key, weight }));
+}
+
+/**
+ * The fraction of a person's day that survives every hidden timeline facet
+ * value, computed ONCE over the combined exclusion set rather than
+ * multiplying a per-facet kept fraction once per hidden facet. That
+ * multiplicative approach double-discounts whenever two hidden facets are
+ * correlated — e.g. hiding a project and that same project's team, which a
+ * checkbox UI makes easy to do by accident (they express one intent in two
+ * places). A membership share is excluded if ANY hidden facet matches ANY of
+ * its project/team/client values; the kept fraction is the sum of every
+ * share that isn't excluded.
+ */
+export function combinedKeptWeight(
+  shares: MembershipShare[],
+  hidden: { facet: TimelineFacet; set: Set<string> }[],
+): number {
+  let kept = 0;
+  for (const share of shares) {
+    const excluded = hidden.some(({ facet, set }) => set.has(share.facets[facet]));
+    if (!excluded) kept += share.weight;
+  }
+  return kept;
 }
 
 /** Distinct member emails, project/team/client facet values — for building UI facet lists. */

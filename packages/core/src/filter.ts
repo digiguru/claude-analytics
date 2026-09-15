@@ -1,8 +1,9 @@
 import type { AttributeMap } from "./csv.js";
 import { groupKey } from "./join.js";
 import {
+  activeMembershipShares,
+  combinedKeptWeight,
   distinctFacetValues,
-  membershipKeys,
   resolveTimelineDimension,
   timelineDimensionId,
   type MembershipIndex,
@@ -70,7 +71,10 @@ export function makeEmailFilter(
  * what's visible — the correct way to combine, say, a member filter with a
  * separately-applied "scope to this project" constraint into one pass, rather
  * than wrapping a keyer/weight function twice (which would double-apply any
- * cross-facet proportional scaling — see applyTimelineFilterToKeyer).
+ * cross-facet proportional scaling — see applyTimelineFilterToKeyer). Merging
+ * into one spec is also what lets {@link combinedKeptWeight} see correlated
+ * hides (e.g. a project and its own team) together and discount them once,
+ * not twice — a single spec is what it operates over.
  */
 export function mergeFilterSpecs(
   a: FilterSpec | null | undefined,
@@ -135,10 +139,13 @@ function timelineHiddenFacets(spec: FilterSpec): { facet: TimelineFacet; set: Se
  * timeline values, for contexts with no keyer to hide entries from (the org-style
  * overview, member exports) — see {@link scaleUserProductRow}/`scaleUserDayRow`
  * in aggregate.ts, which apply it. For a row split across concurrent memberships
- * (e.g. two projects at 60/40), this is the combined kept fraction across every
- * hidden facet: hiding one of two concurrent projects yields 0.4, not 0 — the
- * other project's share stays visible. Empty/no filter, or nothing hidden on
- * any timeline facet, returns a constant 1.
+ * (e.g. two projects at 60/40), this is the combined kept fraction computed
+ * ONCE over every hidden facet together (see {@link combinedKeptWeight}): hiding
+ * one of two concurrent projects yields 0.4, not 0 — the other project's share
+ * stays visible. Hiding that same project's team too still yields 0.4, not
+ * 0.16 — project/team/client aren't independent, so a checkbox UI expressing
+ * one exclusion in two correlated places must not discount it twice. Empty/no
+ * filter, or nothing hidden on any timeline facet, returns a constant 1.
  */
 export function makeRowWeight(
   index: MembershipIndex,
@@ -151,14 +158,7 @@ export function makeRowWeight(
   return (rawEmail: string, date: string) => {
     const email = (rawEmail ?? "").trim().toLowerCase();
     if (!email) return 1;
-    let weight = 1;
-    for (const { facet, set } of timelineHidden) {
-      const keys = membershipKeys(index, email, date, facet);
-      const kept = keys.filter((k) => !set.has(k.key)).reduce((s, k) => s + k.weight, 0);
-      weight *= kept;
-      if (weight <= 0) return 0;
-    }
-    return weight;
+    return combinedKeptWeight(activeMembershipShares(index, email, date), timelineHidden);
   };
 }
 
@@ -170,10 +170,15 @@ export function makeRowWeight(
  *    no renormalization — a person split 60/40 across two projects, one hidden,
  *    keeps exactly the other's real 40% share rather than becoming 100%.
  *  - hiding a value in a DIFFERENT timeline facet (e.g. grouping by Team but
- *    hiding a Project, or grouping by Project but hiding a Team): every entry
- *    the keyer still emits is scaled by that day's kept fraction for the
- *    OTHER facet, so hiding a team also shaves its projects' cost out of a
- *    Project-grouped view, and vice versa.
+ *    hiding a Project, or grouping by Project but hiding a Team): each
+ *    surviving entry's weight is recomputed from the underlying membership
+ *    shares that make it up, keeping only the shares that survive every OTHER
+ *    hidden facet — so hiding a team correctly shaves out only the projects
+ *    that belong to it, not every project uniformly, and hiding both a
+ *    project and its own team doesn't discount that project's share twice.
+ * A group-by with no timeline facet of its own (a CSV column, or `@cycle`) has
+ * nothing to recompute per entry, so it's scaled by the day's one combined
+ * kept fraction across every hidden timeline facet instead.
  * CSV-facet hides aren't handled here — see {@link makeEmailFilter}.
  */
 export function applyTimelineFilterToKeyer(
@@ -185,20 +190,37 @@ export function applyTimelineFilterToKeyer(
   if (isEmptyFilter(spec)) return keyer;
   const timelineHidden = timelineHiddenFacets(spec);
   if (timelineHidden.length === 0) return keyer;
+  const groupFacet = resolveTimelineDimension(groupFacetId);
 
   return (email: string, date: string) => {
-    let entries = keyer(email, date);
-    for (const { facet, set } of timelineHidden) {
-      if (entries.length === 0) break;
-      if (timelineDimensionId(facet) === groupFacetId) {
-        entries = entries.filter((e) => !set.has(e.key));
-      } else {
-        const otherKeys = membershipKeys(index, email, date, facet);
-        const kept = otherKeys.filter((k) => !set.has(k.key)).reduce((s, k) => s + k.weight, 0);
-        if (kept <= 0) return [];
-        if (kept < 1) entries = entries.map((e) => ({ key: e.key, weight: e.weight * kept }));
-      }
+    const entries = keyer(email, date);
+    if (entries.length === 0) return entries;
+
+    const sameFacetHidden = groupFacet && timelineHidden.find((h) => h.facet === groupFacet);
+    const filtered = sameFacetHidden ? entries.filter((e) => !sameFacetHidden.set.has(e.key)) : entries;
+    if (filtered.length === 0) return [];
+
+    const otherHidden = timelineHidden.filter((h) => h.facet !== groupFacet);
+    if (otherHidden.length === 0) return filtered;
+
+    const shares = activeMembershipShares(index, email, date);
+    if (!groupFacet) {
+      const kept = combinedKeptWeight(shares, otherHidden);
+      if (kept <= 0) return [];
+      return kept < 1 ? filtered.map((e) => ({ key: e.key, weight: e.weight * kept })) : filtered;
     }
-    return entries;
+
+    // Recompute each surviving entry's weight from the membership shares
+    // that make it up, so an "other facet" hide only removes the shares it
+    // actually applies to rather than scaling every entry uniformly.
+    return filtered
+      .map((e) => ({
+        key: e.key,
+        weight: combinedKeptWeight(
+          shares.filter((s) => s.facets[groupFacet] === e.key),
+          otherHidden,
+        ),
+      }))
+      .filter((e) => e.weight > 0);
   };
 }
