@@ -198,7 +198,10 @@ export class MetricsDb {
       sql += where ? " AND email = @email" : " WHERE email = @email";
       params.email = opts.email.trim().toLowerCase();
     }
-    const rows = this.db.prepare(sql).all(params) as Record<string, number | string>[];
+    // Consistent with getUserDays' ORDER BY — callers already sort when it
+    // matters, so this was benign, but there's no reason for the two to
+    // disagree. See #30 item 13.
+    const rows = this.db.prepare(`${sql} ORDER BY date`).all(params) as Record<string, number | string>[];
     return rows.map((r) => ({
       date: r.date as string,
       userId: r.user_id as string,

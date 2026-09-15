@@ -27,8 +27,11 @@ export function StackedCostTooltip({
       <div style={{ marginBottom: 4 }}>
         <strong>{label}</strong>
       </div>
-      {payload.map((p) => (
-        <div key={p.dataKey} className="row" style={{ gap: 6, alignItems: "center" }}>
+      {payload.map((p, i) => (
+        // dataKey is optional in recharts' own payload type — falling back to
+        // name, then the index, keeps keys unique even when it's absent
+        // rather than risking duplicate `undefined` keys. See #30 item 7.
+        <div key={p.dataKey ?? p.name ?? i} className="row" style={{ gap: 6, alignItems: "center" }}>
           <span style={{ width: 8, height: 8, borderRadius: 2, background: p.color, display: "inline-block" }} />
           <span className="muted" style={{ flex: 1 }}>
             {p.name}

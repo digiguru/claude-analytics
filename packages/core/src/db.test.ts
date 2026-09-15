@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MetricsDb } from "./db.js";
-import { orgProductRow, userDayRow } from "./__fixtures__/index.js";
+import { orgProductRow, userDayRow, userProductRow } from "./__fixtures__/index.js";
 
 /** A fresh in-memory MetricsDb for one test — real SQLite, no file on disk. */
 function freshDb(): MetricsDb {
@@ -34,6 +34,21 @@ test("upsertUserDays: a row with no `raw` at all (now optional) doesn't violate 
   expect(() => db.upsertUserDays([withoutRaw])).not.toThrow();
   const [row] = db.getUserDays({ includeRaw: true });
   expect(row!.raw).toBe(null);
+  db.close();
+});
+
+// #30 item 13: getUserProducts had no ORDER BY while getUserDays did —
+// benign since callers already sort, but there's no reason for the two to
+// disagree.
+test("getUserProducts: rows come back ordered by date, same as getUserDays", () => {
+  const db = freshDb();
+  db.upsertUserProducts([
+    userProductRow({ date: "2026-06-03" }),
+    userProductRow({ date: "2026-06-01" }),
+    userProductRow({ date: "2026-06-02" }),
+  ]);
+  const rows = db.getUserProducts();
+  expect(rows.map((r) => r.date)).toEqual(["2026-06-01", "2026-06-02", "2026-06-03"]);
   db.close();
 });
 

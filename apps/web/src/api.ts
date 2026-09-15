@@ -152,6 +152,8 @@ export interface MemberDay {
   chatMessages: number;
   ccSessions: number;
   ccLocAdded: number;
+  ccCommits: number;
+  ccPrs: number;
   ccToolAccepted: number;
   ccToolRejected: number;
   coworkMessages: number;
@@ -208,12 +210,16 @@ export const MEMBER_DIMENSION_LABEL = "Member (email)";
 export const CYCLE_DIMENSION_ID = "@cycle";
 export const CYCLE_DIMENSION_LABEL = "Cycle";
 
-async function json<T>(res: Response): Promise<T> {
+/** Parse a response body as JSON, tolerating a 2xx with no body at all (e.g.
+ *  204 No Content) instead of letting `res.json()` throw its own opaque
+ *  SyntaxError. See #30 item 10. */
+export async function json<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(body.error ?? `Request failed (${res.status})`);
   }
-  return res.json() as Promise<T>;
+  const text = await res.text();
+  return (text ? JSON.parse(text) : undefined) as T;
 }
 
 function qs(params: Record<string, string | undefined>): string {

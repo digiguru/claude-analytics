@@ -599,6 +599,8 @@ export interface MemberDay {
   chatMessages: number;
   ccSessions: number;
   ccLocAdded: number;
+  ccCommits: number;
+  ccPrs: number;
   ccToolAccepted: number;
   ccToolRejected: number;
   coworkMessages: number;
@@ -654,6 +656,8 @@ export function summarizeMember(
           chatMessages: 0,
           ccSessions: 0,
           ccLocAdded: 0,
+          ccCommits: 0,
+          ccPrs: 0,
           ccToolAccepted: 0,
           ccToolRejected: 0,
           coworkMessages: 0,
@@ -706,6 +710,8 @@ export function summarizeMember(
     d.chatMessages += r.chatMessages;
     d.ccSessions += r.ccSessions;
     d.ccLocAdded += r.ccLocAdded;
+    d.ccCommits += r.ccCommits;
+    d.ccPrs += r.ccPrs;
     d.ccToolAccepted += r.ccToolAccepted;
     d.ccToolRejected += r.ccToolRejected;
     d.coworkMessages += r.coworkMessages;

@@ -1,5 +1,5 @@
 import { test, expect } from "vitest";
-import { api, tokens, usd } from "./api.js";
+import { api, json, tokens, usd } from "./api.js";
 
 // ---- formatters ----
 
@@ -35,4 +35,28 @@ test("exportMembersUrl / exportMembersLongUrl: build from from/to/filter only", 
   expect(api.exportMembersLongUrl(undefined, undefined, '{"hidden":{}}')).toBe(
     `/api/export/members-long?filter=${encodeURIComponent('{"hidden":{}}')}`,
   );
+});
+
+// ---- json() ----
+
+test("json: parses a normal 2xx body", async () => {
+  const res = new Response(JSON.stringify({ ok: true }), { status: 200 });
+  await expect(json<{ ok: boolean }>(res)).resolves.toEqual({ ok: true });
+});
+
+// #30 item 10: a 2xx with no body at all (e.g. 204 No Content) used to throw
+// res.json()'s own opaque SyntaxError instead of a controlled result.
+test("json: a 2xx with no body at all resolves to undefined instead of throwing", async () => {
+  const res = new Response(null, { status: 204 });
+  await expect(json(res)).resolves.toBeUndefined();
+});
+
+test("json: a non-2xx with a JSON error body throws that message", async () => {
+  const res = new Response(JSON.stringify({ error: "nope" }), { status: 400 });
+  await expect(json(res)).rejects.toThrow("nope");
+});
+
+test("json: a non-2xx with no parseable body falls back to a generic message", async () => {
+  const res = new Response(null, { status: 500 });
+  await expect(json(res)).rejects.toThrow("Request failed (500)");
 });
