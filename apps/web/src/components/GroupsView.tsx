@@ -1,5 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Bar, BarChart, CartesianGrid, Legend, ReferenceArea, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  LabelList,
+  Legend,
+  ReferenceArea,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import {
   api,
   CYCLE_DIMENSION_ID,
@@ -102,6 +113,38 @@ function useStackedSeries(
     const outKeys = [...rankedKeys.filter((k) => top.has(k)), ...(hasOther ? [OTHER_KEY] : []), ...(hasUnassigned ? [UNASSIGNED_KEY] : [])];
     return { rows: bucketed, keys: outKeys };
   }, [timeseries, keys, bucket, cycles]);
+}
+
+/** Recharts <Tooltip content>: the default per-series list, plus a "Total"
+ *  row summing every stacked series at the hovered bucket. */
+function StackedCostTooltip({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean;
+  payload?: { dataKey?: string; name?: string; value?: number; color?: string }[];
+  label?: string;
+}) {
+  if (!active || !payload || payload.length === 0) return null;
+  const total = payload.reduce((sum, p) => sum + (Number(p.value) || 0), 0);
+  return (
+    <div style={{ background: "#1a1d24", border: "1px solid #2a2f3a", borderRadius: 6, padding: "8px 10px", fontSize: 12, lineHeight: 1.5 }}>
+      <div style={{ marginBottom: 4 }}>
+        <strong>{label}</strong>
+      </div>
+      {payload.map((p) => (
+        <div key={p.dataKey} className="row" style={{ gap: 6, alignItems: "center" }}>
+          <span style={{ width: 8, height: 8, borderRadius: 2, background: p.color, display: "inline-block" }} />
+          <span className="muted" style={{ flex: 1 }}>{p.name}</span>
+          <span>{usd((Number(p.value) || 0) * 100)}</span>
+        </div>
+      ))}
+      <div style={{ marginTop: 4, paddingTop: 4, borderTop: "1px solid #2a2f3a" }}>
+        Total: <strong>{usd(total * 100)}</strong>
+      </div>
+    </div>
+  );
 }
 
 export function GroupsView({ from, to, dimensions, timelineDimensions, projectCycles, filterQuery, onError }: Props) {
@@ -328,6 +371,150 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
     return projectCycles.filter((p) => active.has(p.project) || active.size === 0);
   }, [showCycles, bucket, scopeProject, data, projectCycles]);
 
+  // Click-and-drag range selection over "Cost over time" (only the regular
+  // day/week/month bar chart — VariableWidthBars/cycle view isn't wired up).
+  // A plain drag/click replaces the current selection with one region; holding
+  // Shift while dragging/clicking instead adds a new, possibly non-contiguous,
+  // region alongside whatever's already selected.
+  interface DragRegion {
+    x1: string;
+    x2: string;
+  }
+  interface IndexRange {
+    lo: number;
+    hi: number;
+  }
+  const [regions, setRegions] = useState<DragRegion[]>([]);
+  const [activeDrag, setActiveDrag] = useState<{ start: string; end: string; add: boolean } | null>(null);
+
+  useEffect(() => {
+    setRegions([]);
+    setActiveDrag(null);
+  }, [bucket, dimension, data]);
+
+  const toIndexRange = useCallback(
+    (r: DragRegion): IndexRange | null => {
+      const i1 = chartLabels.indexOf(r.x1);
+      const i2 = chartLabels.indexOf(r.x2);
+      if (i1 === -1 || i2 === -1) return null;
+      return { lo: Math.min(i1, i2), hi: Math.max(i1, i2) };
+    },
+    [chartLabels],
+  );
+
+  // Regions never overlap. Clip a candidate additive range to the free run of
+  // indices reachable from `anchor` (the index the drag/click started on) —
+  // truncating at the nearest already-selected region on either side. Returns
+  // null when the anchor itself sits inside an existing region (nothing to add)
+  // or the whole range gets clipped away.
+  const clipAroundAnchor = useCallback((anchor: number, other: number, existing: IndexRange[]): IndexRange | null => {
+    if (existing.some((r) => anchor >= r.lo && anchor <= r.hi)) return null;
+    let lo = Math.min(anchor, other);
+    let hi = Math.max(anchor, other);
+    for (const r of existing) {
+      if (r.hi < anchor) lo = Math.max(lo, r.hi + 1);
+      if (r.lo > anchor) hi = Math.min(hi, r.lo - 1);
+    }
+    return lo <= hi ? { lo, hi } : null;
+  }, []);
+
+  // Committed regions plus whatever's currently being dragged (already clipped
+  // so the live preview never overlaps a committed region), each resolved to a
+  // label range and its rows — this is what's drawn/summarized.
+  const liveRegions = useMemo(() => {
+    const committed = regions.map(toIndexRange).filter((r): r is IndexRange => r !== null);
+    const ranges = [...committed];
+    if (activeDrag) {
+      const startIdx = chartLabels.indexOf(activeDrag.start);
+      const endIdx = chartLabels.indexOf(activeDrag.end);
+      if (startIdx !== -1 && endIdx !== -1) {
+        if (activeDrag.add) {
+          const clipped = clipAroundAnchor(startIdx, endIdx, committed);
+          if (clipped) ranges.push(clipped);
+        } else {
+          // Replace mode: the drag isn't constrained by regions it's about to wipe out.
+          ranges.length = 0;
+          ranges.push({ lo: Math.min(startIdx, endIdx), hi: Math.max(startIdx, endIdx) });
+        }
+      }
+    }
+    return ranges.map((r) => ({ x1: chartLabels[r.lo]!, x2: chartLabels[r.hi]!, rows: stacked.rows.slice(r.lo, r.hi + 1) }));
+  }, [regions, activeDrag, chartLabels, stacked.rows, toIndexRange, clipAroundAnchor]);
+
+  const regionSummaries = useMemo(
+    () =>
+      liveRegions.map((r) => {
+        const byKey = new Map<string, number>();
+        let total = 0;
+        for (const row of r.rows) {
+          for (const key of stacked.keys) {
+            const v = Number(row[key]) || 0;
+            if (v) byKey.set(key, (byKey.get(key) ?? 0) + v);
+            total += v;
+          }
+        }
+        return { total, byKey, x1: r.x1, x2: r.x2 };
+      }),
+    [liveRegions, stacked.keys],
+  );
+
+  // Combined across every selected region, and across the whole chart
+  // regardless of selection — shown together at the top of the section.
+  const combinedRegionSummary = useMemo(() => {
+    if (regionSummaries.length === 0) return null;
+    const byKey = new Map<string, number>();
+    let total = 0;
+    for (const s of regionSummaries) {
+      total += s.total;
+      for (const [k, v] of s.byKey) byKey.set(k, (byKey.get(k) ?? 0) + v);
+    }
+    return { total, byKey };
+  }, [regionSummaries]);
+
+  const overallSummary = useMemo(() => {
+    const byKey = new Map<string, number>();
+    let total = 0;
+    for (const row of stacked.rows) {
+      for (const key of stacked.keys) {
+        const v = Number(row[key]) || 0;
+        if (v) byKey.set(key, (byKey.get(key) ?? 0) + v);
+        total += v;
+      }
+    }
+    return { total, byKey };
+  }, [stacked.rows, stacked.keys]);
+
+  const handleChartMouseDown = (e: { activeLabel?: string }, event: { shiftKey?: boolean }) => {
+    if (e?.activeLabel == null) return;
+    setActiveDrag({ start: e.activeLabel, end: e.activeLabel, add: Boolean(event?.shiftKey) });
+  };
+  const handleChartMouseMove = (e: { activeLabel?: string }) => {
+    if (activeDrag && e?.activeLabel != null) setActiveDrag({ ...activeDrag, end: e.activeLabel });
+  };
+  const commitDrag = () => {
+    setActiveDrag((cur) => {
+      if (!cur) return null;
+      const startIdx = chartLabels.indexOf(cur.start);
+      const endIdx = chartLabels.indexOf(cur.end);
+      if (startIdx === -1 || endIdx === -1) return null;
+      setRegions((rs) => {
+        if (!cur.add) {
+          return [{ x1: chartLabels[Math.min(startIdx, endIdx)]!, x2: chartLabels[Math.max(startIdx, endIdx)]! }];
+        }
+        const existing = rs.map(toIndexRange).filter((r): r is IndexRange => r !== null);
+        const clipped = clipAroundAnchor(startIdx, endIdx, existing);
+        if (!clipped) return rs;
+        return [...rs, { x1: chartLabels[clipped.lo]!, x2: chartLabels[clipped.hi]! }];
+      });
+      return null;
+    });
+  };
+  const removeRegion = (index: number) => setRegions((rs) => rs.filter((_, i) => i !== index));
+  const clearSelection = () => {
+    setRegions([]);
+    setActiveDrag(null);
+  };
+
   return (
     <div className="panel">
       <div className="row" style={{ marginBottom: 16 }}>
@@ -422,6 +609,40 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
               </button>
             )}
           </div>
+          <div className="stat-grid" style={{ marginBottom: 12 }}>
+            <div className="stat">
+              <p className="label muted">All dates total</p>
+              <div className="value">{usd(overallSummary.total * 100)}</div>
+              {stacked.keys.length > 1 &&
+                stacked.keys
+                  .filter((k) => overallSummary.byKey.has(k))
+                  .map((k) => (
+                    <div key={k} className="row muted" style={{ gap: 6, alignItems: "center", fontSize: 12 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: 2, background: stackColor.get(k), display: "inline-block" }} />
+                      <span style={{ flex: 1 }}>{k}</span>
+                      <span>{usd((overallSummary.byKey.get(k) ?? 0) * 100)}</span>
+                    </div>
+                  ))}
+            </div>
+            {combinedRegionSummary && (
+              <div className="stat">
+                <p className="label muted">
+                  Selected total ({regionSummaries.length} region{regionSummaries.length === 1 ? "" : "s"})
+                </p>
+                <div className="value">{usd(combinedRegionSummary.total * 100)}</div>
+                {stacked.keys.length > 1 &&
+                  stacked.keys
+                    .filter((k) => combinedRegionSummary.byKey.has(k))
+                    .map((k) => (
+                      <div key={k} className="row muted" style={{ gap: 6, alignItems: "center", fontSize: 12 }}>
+                        <span style={{ width: 8, height: 8, borderRadius: 2, background: stackColor.get(k), display: "inline-block" }} />
+                        <span style={{ flex: 1 }}>{k}</span>
+                        <span>{usd((combinedRegionSummary.byKey.get(k) ?? 0) * 100)}</span>
+                      </div>
+                    ))}
+              </div>
+            )}
+          </div>
           {bucket === "cycle" ? (
             // Recharts' BarChart always gives every category an equal-width band,
             // which would misrepresent cycles of very different lengths — use a
@@ -429,9 +650,16 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
             // cycle's real day-count (see VariableWidthBars).
             <VariableWidthBars rows={stacked.rows} keys={stacked.keys} colors={stackColor} height={280} />
           ) : (
-            <div style={{ height: 280 }}>
+            <div style={{ height: 280, position: "relative", userSelect: activeDrag ? "none" : undefined }}>
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={stacked.rows} margin={CHART_MARGIN}>
+                <BarChart
+                  data={stacked.rows}
+                  margin={CHART_MARGIN}
+                  onMouseDown={handleChartMouseDown}
+                  onMouseMove={handleChartMouseMove}
+                  onMouseUp={commitDrag}
+                  onMouseLeave={commitDrag}
+                >
                   <CartesianGrid strokeDasharray="3 3" stroke="#2a2f3a" />
                   {annotateBands &&
                     scopeCycles.map((c, i) => {
@@ -461,17 +689,86 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
                     {...xAxisProps(stacked.rows.length, 10, { rotateWhenShort: true })}
                   />
                   <YAxis stroke="#9aa3b2" fontSize={12} width={Y_AXIS_WIDTH} />
-                  <Tooltip
-                    contentStyle={{ background: "#1a1d24", border: "1px solid #2a2f3a" }}
-                    formatter={(v: number) => usd(v * 100)}
-                  />
+                  <Tooltip content={<StackedCostTooltip />} />
                   <Legend />
                   {stacked.keys.map((key) => (
                     <Bar key={key} dataKey={key} stackId="groups" fill={stackColor.get(key)} name={key} />
                   ))}
+                  {liveRegions.map((r, i) => (
+                    <ReferenceArea
+                      key={`${r.x1}-${r.x2}-${i}`}
+                      x1={r.x1}
+                      x2={r.x2}
+                      isFront
+                      stroke="#d97757"
+                      strokeOpacity={0.6}
+                      fill="#d97757"
+                      fillOpacity={0.15}
+                    />
+                  ))}
                 </BarChart>
               </ResponsiveContainer>
+              {regionSummaries.length > 0 && (
+                <div style={{ position: "absolute", top: 8, right: 12, zIndex: 30, display: "flex", flexDirection: "column", gap: 6, pointerEvents: "none" }}>
+                  {regionSummaries.length > 1 && (
+                    <button
+                      type="button"
+                      className="secondary"
+                      style={{ alignSelf: "flex-end", fontSize: 11, padding: "2px 8px", pointerEvents: "auto" }}
+                      onClick={clearSelection}
+                    >
+                      Clear all
+                    </button>
+                  )}
+                  {regionSummaries.map((s, i) => (
+                    <div
+                      key={`${s.x1}-${s.x2}-${i}`}
+                      style={{
+                        background: "#1a1d24",
+                        border: "1px solid #2a2f3a",
+                        borderRadius: 6,
+                        padding: "8px 10px",
+                        fontSize: 12,
+                        lineHeight: 1.5,
+                        pointerEvents: "auto",
+                        maxWidth: 220,
+                      }}
+                    >
+                      <div className="row" style={{ justifyContent: "space-between", gap: 8, marginBottom: 4 }}>
+                        <strong>{s.x1 === s.x2 ? s.x1 : `${s.x1} – ${s.x2}`}</strong>
+                        <button
+                          type="button"
+                          className="secondary"
+                          style={{ padding: "0 6px", lineHeight: 1.3 }}
+                          onClick={() => removeRegion(i)}
+                          aria-label="Remove selection"
+                        >
+                          ×
+                        </button>
+                      </div>
+                      <div style={{ marginBottom: stacked.keys.length > 1 ? 4 : 0 }}>
+                        Total: <strong>{usd(s.total * 100)}</strong>
+                      </div>
+                      {stacked.keys.length > 1 &&
+                        stacked.keys
+                          .filter((k) => s.byKey.has(k))
+                          .map((k) => (
+                            <div key={k} className="row" style={{ gap: 6, alignItems: "center" }}>
+                              <span style={{ width: 8, height: 8, borderRadius: 2, background: stackColor.get(k), display: "inline-block" }} />
+                              <span className="muted" style={{ flex: 1 }}>{k}</span>
+                              <span>{usd((s.byKey.get(k) ?? 0) * 100)}</span>
+                            </div>
+                          ))}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
+          )}
+          {bucket !== "cycle" && (
+            <p className="muted" style={{ fontSize: 11, margin: "4px 0 0" }}>
+              Drag to select a range · Shift-drag or shift-click to add another region
+            </p>
           )}
           {showCycles && bucket !== "cycle" && railProjects.length > 0 && (
             <CycleRail
@@ -507,7 +804,7 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
           </div>
           <div style={{ height: 280, marginBottom: 16 }}>
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chartData}>
+              <BarChart data={chartData} margin={{ ...CHART_MARGIN, top: 24 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#2a2f3a" />
                 <XAxis
                   dataKey="name"
@@ -520,7 +817,15 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
                   contentStyle={{ background: "#1a1d24", border: "1px solid #2a2f3a" }}
                   formatter={(v: number) => (metric.money ? usd(v) : metric.key === "totalTokens" ? tokens(v) : v)}
                 />
-                <Bar dataKey="value" fill="#d97757" name={metric.label} />
+                <Bar dataKey="value" fill="#d97757" name={metric.label}>
+                  <LabelList
+                    dataKey="value"
+                    position="top"
+                    fill="#9aa3b2"
+                    fontSize={11}
+                    formatter={(v: number) => (metric.money ? usd(v) : metric.key === "totalTokens" ? tokens(v) : v)}
+                  />
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           </div>
