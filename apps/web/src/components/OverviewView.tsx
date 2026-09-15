@@ -27,11 +27,16 @@ interface Props {
   onError: (msg: string | null) => void;
 }
 
-
 const productColumns: Column<Overview["productTotals"][number]>[] = [
   { key: "product", label: "Product", value: (r) => r.product },
   { key: "costCents", label: "Cost", numeric: true, value: (r) => r.costCents, render: (r) => usd(r.costCents) },
-  { key: "totalTokens", label: "Tokens", numeric: true, value: (r) => r.totalTokens, render: (r) => tokens(r.totalTokens) },
+  {
+    key: "totalTokens",
+    label: "Tokens",
+    numeric: true,
+    value: (r) => r.totalTokens,
+    render: (r) => tokens(r.totalTokens),
+  },
   { key: "requests", label: "Requests", numeric: true, value: (r) => r.requests },
 ];
 
@@ -58,9 +63,18 @@ export function OverviewView({ from, to, projectCycles, filterQuery, onError }: 
     void load();
   }, [load]);
 
-  if (loading) return <div className="panel"><p className="muted">Loading…</p></div>;
+  if (loading)
+    return (
+      <div className="panel">
+        <p className="muted">Loading…</p>
+      </div>
+    );
   if (!ov || ov.timeseries.length === 0)
-    return <div className="panel"><p className="muted">No cached data. Sync a date range first.</p></div>;
+    return (
+      <div className="panel">
+        <p className="muted">No cached data. Sync a date range first.</p>
+      </div>
+    );
 
   const heaviest = ov.heaviestDays[0];
   const costSeries = ov.timeseries.map((d) => ({
@@ -107,8 +121,8 @@ export function OverviewView({ from, to, projectCycles, filterQuery, onError }: 
     <div className="panel">
       {ov.filtered && (
         <p className="muted filter-banner">
-          Filtered view: cost, tokens and active users are recomputed from the selected members. Seats &amp; adoption are
-          org-wide and not shown here.
+          Filtered view: cost, tokens and active users are recomputed from the selected members. Seats &amp; adoption
+          are org-wide and not shown here.
         </p>
       )}
 
@@ -116,8 +130,13 @@ export function OverviewView({ from, to, projectCycles, filterQuery, onError }: 
         <Stat label="Total cost" value={usd(ov.totalCostCents)} />
         <Stat label="Total tokens" value={tokens(ov.totalTokens)} />
         <Stat label="Peak day" value={heaviest ? usd(heaviest.costCents) : "–"} sub={heaviest?.date} />
-        <Stat label={ov.filtered ? "Peak active users" : "Peak DAU"} value={String(Math.max(...ov.timeseries.map((d) => d.dailyActiveUsers)))} />
-        {!ov.filtered && <Stat label="Seats" value={String(ov.timeseries[ov.timeseries.length - 1]?.assignedSeats ?? 0)} />}
+        <Stat
+          label={ov.filtered ? "Peak active users" : "Peak DAU"}
+          value={String(Math.max(...ov.timeseries.map((d) => d.dailyActiveUsers)))}
+        />
+        {!ov.filtered && (
+          <Stat label="Seats" value={String(ov.timeseries[ov.timeseries.length - 1]?.assignedSeats ?? 0)} />
+        )}
       </div>
 
       <div className="chart-head">
@@ -135,16 +154,47 @@ export function OverviewView({ from, to, projectCycles, filterQuery, onError }: 
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={chartData} margin={CHART_MARGIN}>
             <CartesianGrid strokeDasharray="3 3" stroke="#2a2f3a" />
-            <XAxis dataKey="date" stroke="#9aa3b2" fontSize={11} {...xAxisProps(chartData.length, 10, { rotateWhenShort: true })} />
+            <XAxis
+              dataKey="date"
+              stroke="#9aa3b2"
+              fontSize={11}
+              {...xAxisProps(chartData.length, 10, { rotateWhenShort: true })}
+            />
             <YAxis yAxisId="l" stroke="#d97757" fontSize={11} width={Y_AXIS_WIDTH} />
             <YAxis yAxisId="r" orientation="right" stroke="#5a6b8c" fontSize={11} width={Y_AXIS_WIDTH} />
-            <Tooltip contentStyle={{ background: "#1a1d24", border: "1px solid #2a2f3a" }} formatter={(v, n) => (typeof n === "string" && n.startsWith("cost") ? `$${Number(v ?? 0).toFixed(2)}` : Number(v ?? 0))} />
+            <Tooltip
+              contentStyle={{ background: "#1a1d24", border: "1px solid #2a2f3a" }}
+              formatter={(v, n) =>
+                typeof n === "string" && n.startsWith("cost") ? `$${Number(v ?? 0).toFixed(2)}` : Number(v ?? 0)
+              }
+            />
             <Legend />
             <Bar yAxisId="l" dataKey="cost" name="cost ($)" fill="#d97757" />
-            {showForecast && <Bar yAxisId="l" dataKey="costForecast" name="cost (forecast)" fill="#d97757" fillOpacity={0.35} />}
-            {showTrend && <Line yAxisId="l" dataKey="trend" name="cost trend" stroke="#c0a96b" strokeWidth={2} strokeDasharray="5 4" dot={false} connectNulls />}
+            {showForecast && (
+              <Bar yAxisId="l" dataKey="costForecast" name="cost (forecast)" fill="#d97757" fillOpacity={0.35} />
+            )}
+            {showTrend && (
+              <Line
+                yAxisId="l"
+                dataKey="trend"
+                name="cost trend"
+                stroke="#c0a96b"
+                strokeWidth={2}
+                strokeDasharray="5 4"
+                dot={false}
+                connectNulls
+              />
+            )}
             <Line yAxisId="r" dataKey="dau" name={dauLabel} stroke="#7fae7f" strokeWidth={2} dot={false} connectNulls />
-            <Line yAxisId="l" dataKey="cpd" name="cost/active user ($)" stroke="#6b9bc0" strokeWidth={2} dot={false} connectNulls />
+            <Line
+              yAxisId="l"
+              dataKey="cpd"
+              name="cost/active user ($)"
+              stroke="#6b9bc0"
+              strokeWidth={2}
+              dot={false}
+              connectNulls
+            />
           </ComposedChart>
         </ResponsiveContainer>
       </div>
@@ -163,11 +213,17 @@ export function OverviewView({ from, to, projectCycles, filterQuery, onError }: 
           <h3>Cost by product</h3>
           <div style={{ height: 240 }}>
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={ov.productTotals.map((p) => ({ name: p.product, cost: p.costCents / 100 }))} layout="vertical">
+              <BarChart
+                data={ov.productTotals.map((p) => ({ name: p.product, cost: p.costCents / 100 }))}
+                layout="vertical"
+              >
                 <CartesianGrid strokeDasharray="3 3" stroke="#2a2f3a" />
                 <XAxis type="number" stroke="#9aa3b2" fontSize={11} />
                 <YAxis type="category" dataKey="name" width={100} stroke="#9aa3b2" fontSize={11} />
-                <Tooltip contentStyle={{ background: "#1a1d24", border: "1px solid #2a2f3a" }} formatter={(v) => `$${Number(v ?? 0).toFixed(2)}`} />
+                <Tooltip
+                  contentStyle={{ background: "#1a1d24", border: "1px solid #2a2f3a" }}
+                  formatter={(v) => `$${Number(v ?? 0).toFixed(2)}`}
+                />
                 <Bar dataKey="cost" name="cost ($)">
                   {ov.productTotals.map((_, i) => (
                     <Cell key={i} fill={COLORS[i % COLORS.length]} />
@@ -190,7 +246,10 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
   return (
     <div className="stat">
       <div className="value">{value}</div>
-      <p className="label muted">{label}{sub ? ` · ${sub}` : ""}</p>
+      <p className="label muted">
+        {label}
+        {sub ? ` · ${sub}` : ""}
+      </p>
     </div>
   );
 }

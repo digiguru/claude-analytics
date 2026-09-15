@@ -1,12 +1,5 @@
 import { test, expect } from "vitest";
-import {
-  cycleFor,
-  cyclesFor,
-  membershipKeys,
-  NONE_KEY,
-  parseProjectsYaml,
-  UNASSIGNED_KEY,
-} from "./projects.js";
+import { cycleFor, cyclesFor, membershipKeys, NONE_KEY, parseProjectsYaml, UNASSIGNED_KEY } from "./projects.js";
 
 const YAML_BASIC_CYCLES = `
 projects:
@@ -59,7 +52,9 @@ projects:
   const { cycles, warnings } = parseProjectsYaml(yaml);
   const a = cyclesFor(cycles, "P").find((c) => c.name === "A")!;
   expect(a.end).toBe("2026-01-31"); // day before B's 2026-02-01 start
-  expect(warnings.some((w) => w.includes("overlaps the next cycle") && w.includes("truncated to 2026-01-31"))).toBe(true);
+  expect(warnings.some((w) => w.includes("overlaps the next cycle") && w.includes("truncated to 2026-01-31"))).toBe(
+    true,
+  );
 });
 
 test("duplicate cycle names within a project are disambiguated", () => {

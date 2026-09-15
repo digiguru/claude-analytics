@@ -50,12 +50,7 @@ test("parseCents: a value large enough to risk precision loss still parses as a 
 // ---- date range helpers ----
 
 test("enumerateDays: inclusive list across a month boundary", () => {
-  expect(enumerateDays("2026-01-30", "2026-02-02")).toEqual([
-    "2026-01-30",
-    "2026-01-31",
-    "2026-02-01",
-    "2026-02-02",
-  ]);
+  expect(enumerateDays("2026-01-30", "2026-02-02")).toEqual(["2026-01-30", "2026-01-31", "2026-02-01", "2026-02-02"]);
 });
 
 test("enumerateDays: inclusive list across a year boundary", () => {
@@ -113,20 +108,14 @@ test("dayAfter: returns an RFC 3339 instant for the next calendar day", () => {
 // ---- mergeUserProducts ----
 
 test("mergeUserProducts: a cost row and a usage row for the same key merge into one row", () => {
-  const { rows } = mergeUserProducts(
-    [userCostRow({ amount: "150" })],
-    [userUsageRow({ total_tokens: 40 })],
-  );
+  const { rows } = mergeUserProducts([userCostRow({ amount: "150" })], [userUsageRow({ total_tokens: 40 })]);
   expect(rows).toHaveLength(1);
   expect(rows[0]!.costCents).toBe(150);
   expect(rows[0]!.totalTokens).toBe(40);
 });
 
 test("mergeUserProducts: key collision sums cost across multiple cost rows for the same date|user|product", () => {
-  const { rows } = mergeUserProducts(
-    [userCostRow({ amount: "100" }), userCostRow({ amount: "50" })],
-    [],
-  );
+  const { rows } = mergeUserProducts([userCostRow({ amount: "100" }), userCostRow({ amount: "50" })], []);
   expect(rows).toHaveLength(1);
   expect(rows[0]!.costCents).toBe(150);
 });
@@ -195,10 +184,8 @@ test("mergeOrgProducts and mergeUserProducts agree on totalTokens for equivalent
     cache_creation: { ephemeral_1h_input_tokens: 5, ephemeral_5m_input_tokens: 7 },
   };
   const orgTotal = mergeOrgProducts([], [usageBucket("2026-06-01T00:00:00Z", [usage])]).rows[0]!.totalTokens;
-  const userTotal = mergeUserProducts(
-    [],
-    [userUsageRow({ ...usage, total_tokens: 100 + 200 + 10 + 5 + 7 })],
-  ).rows[0]!.totalTokens;
+  const userTotal = mergeUserProducts([], [userUsageRow({ ...usage, total_tokens: 100 + 200 + 10 + 5 + 7 })]).rows[0]!
+    .totalTokens;
   expect(orgTotal).toBe(userTotal);
 });
 

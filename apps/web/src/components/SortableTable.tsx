@@ -48,11 +48,7 @@ export function SortableTable<T>({ columns, rows, initialSort, initialDesc = tru
       <thead>
         <tr>
           {columns.map((c) => (
-            <th
-              key={c.key}
-              className={c.numeric ? "num" : ""}
-              onClick={() => toggle(c.key)}
-            >
+            <th key={c.key} className={c.numeric ? "num" : ""} onClick={() => toggle(c.key)}>
               {c.label}
               {sortKey === c.key ? (desc ? " ▼" : " ▲") : ""}
             </th>

@@ -1,14 +1,7 @@
 import type { AttributeMap } from "./csv.js";
 import { groupKey } from "./join.js";
 import { membershipKeys, NO_CYCLE_KEY, type Cycle, type MembershipIndex, type TimelineFacet } from "./projects.js";
-import type {
-  Attributes,
-  Dimension,
-  OrgProductRow,
-  OrgSummaryRow,
-  UserDayRow,
-  UserProductRow,
-} from "./types.js";
+import type { Attributes, Dimension, OrgProductRow, OrgSummaryRow, UserDayRow, UserProductRow } from "./types.js";
 
 // ============================================================================
 // 1) Overview (org-level): cost & usage + adoption, plus heaviest days
@@ -196,8 +189,10 @@ export interface GroupRow {
   avgTokensPerActiveUser: number;
 }
 
-interface GroupAcc
-  extends Omit<GroupRow, "seats" | "activeUsers" | "avgCostPerSeat" | "avgCostPerActiveUser" | "avgTokensPerActiveUser"> {
+interface GroupAcc extends Omit<
+  GroupRow,
+  "seats" | "activeUsers" | "avgCostPerSeat" | "avgCostPerActiveUser" | "avgTokensPerActiveUser"
+> {
   seatEmails: Set<string>;
   activeEmails: Set<string>;
 }

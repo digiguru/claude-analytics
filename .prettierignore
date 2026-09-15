@@ -1,0 +1,10 @@
+node_modules
+dist
+build
+coverage
+data
+*.db
+package-lock.json
+
+# Prose we hand-format; Prettier's markdown reflow is more disruptive than useful here.
+*.md

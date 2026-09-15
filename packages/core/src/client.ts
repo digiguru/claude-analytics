@@ -38,9 +38,7 @@ export interface EnterpriseClient {
 
 export function createClient(apiKey: string): EnterpriseClient {
   if (!apiKey) {
-    throw new Error(
-      "Missing Analytics API key. Set ANTHROPIC_ANALYTICS_API_KEY in your .env file.",
-    );
+    throw new Error("Missing Analytics API key. Set ANTHROPIC_ANALYTICS_API_KEY in your .env file.");
   }
 
   async function get<T>(path: string, params: Record<string, string | string[]>): Promise<T> {

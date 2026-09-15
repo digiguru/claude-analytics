@@ -60,7 +60,9 @@ export function ControlBar({ status, from, to, onFrom, onTo, onChanged, onError,
     onError(null);
     try {
       const r = await api.uploadProjects(file);
-      setNote(`Loaded projects: ${r.projects} project(s), ${r.members} membership(s).${r.warnings.length ? ` ${r.warnings.length} warning(s).` : ""}`);
+      setNote(
+        `Loaded projects: ${r.projects} project(s), ${r.members} membership(s).${r.warnings.length ? ` ${r.warnings.length} warning(s).` : ""}`,
+      );
       await onChanged();
     } catch (e) {
       onError(e instanceof Error ? e.message : String(e));
@@ -84,11 +86,7 @@ export function ControlBar({ status, from, to, onFrom, onTo, onChanged, onError,
         <button onClick={doSync} disabled={syncing}>
           {syncing ? "Syncing…" : "Sync from API"}
         </button>
-        <button
-          className="secondary"
-          onClick={() => fileInput.current?.click()}
-          disabled={uploadingCsv}
-        >
+        <button className="secondary" onClick={() => fileInput.current?.click()} disabled={uploadingCsv}>
           {uploadingCsv ? "Uploading…" : "Upload CSV"}
         </button>
         <input
@@ -98,11 +96,7 @@ export function ControlBar({ status, from, to, onFrom, onTo, onChanged, onError,
           style={{ display: "none" }}
           onChange={(e) => onFile(e.target.files?.[0])}
         />
-        <button
-          className="secondary"
-          onClick={() => projectsInput.current?.click()}
-          disabled={uploadingProjects}
-        >
+        <button className="secondary" onClick={() => projectsInput.current?.click()} disabled={uploadingProjects}>
           {uploadingProjects ? "Uploading…" : "Upload projects YAML"}
         </button>
         <input
@@ -119,26 +113,19 @@ export function ControlBar({ status, from, to, onFrom, onTo, onChanged, onError,
         {status && !status.apiKeyConfigured && (
           <span className="error">No Admin API key configured — set ANTHROPIC_ADMIN_API_KEY in .env. </span>
         )}
-        <span className="pill">
-          CSV: {status?.csvLoaded ? status.csvSource : "none loaded"}
-        </span>
-        <span className="pill">
-          Projects: {status?.projectsLoaded ? status.projectsSource : "none loaded"}
-        </span>
+        <span className="pill">CSV: {status?.csvLoaded ? status.csvSource : "none loaded"}</span>
+        <span className="pill">Projects: {status?.projectsLoaded ? status.projectsSource : "none loaded"}</span>
         <span className="pill">Developers cached: {status?.developerCount ?? 0}</span>
         <span className="pill">
           Cached range:{" "}
-          {status?.cachedDateRange
-            ? `${status.cachedDateRange.min} → ${status.cachedDateRange.max}`
-            : "empty"}
+          {status?.cachedDateRange ? `${status.cachedDateRange.min} → ${status.cachedDateRange.max}` : "empty"}
         </span>
         {note && <span className="muted"> {note}</span>}
       </div>
 
       {status && status.projectWarnings.length > 0 && (
         <p className="muted" style={{ marginTop: 8 }}>
-          {status.projectWarnings.length} projects-file warning(s):{" "}
-          {status.projectWarnings.join(" · ")}
+          {status.projectWarnings.length} projects-file warning(s): {status.projectWarnings.join(" · ")}
         </p>
       )}
     </div>

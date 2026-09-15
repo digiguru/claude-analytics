@@ -1,6 +1,13 @@
 import type { AttributeMap } from "./csv.js";
 import { groupKey } from "./join.js";
-import { distinctFacetValues, membershipKeys, resolveTimelineDimension, timelineDimensionId, type MembershipIndex, type TimelineFacet } from "./projects.js";
+import {
+  distinctFacetValues,
+  membershipKeys,
+  resolveTimelineDimension,
+  timelineDimensionId,
+  type MembershipIndex,
+  type TimelineFacet,
+} from "./projects.js";
 import type { RowKeyer } from "./aggregate.js";
 
 /** Special facet key for filtering on individual member emails (e.g. exclude a heavy user). */
@@ -65,7 +72,10 @@ export function makeEmailFilter(
  * than wrapping a keyer/weight function twice (which would double-apply any
  * cross-facet proportional scaling — see applyTimelineFilterToKeyer).
  */
-export function mergeFilterSpecs(a: FilterSpec | null | undefined, b: FilterSpec | null | undefined): FilterSpec | null {
+export function mergeFilterSpecs(
+  a: FilterSpec | null | undefined,
+  b: FilterSpec | null | undefined,
+): FilterSpec | null {
   if (isEmptyFilter(a)) return b ?? null;
   if (isEmptyFilter(b)) return a ?? null;
   const hidden: Record<string, string[]> = {};

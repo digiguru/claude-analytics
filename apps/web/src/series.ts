@@ -120,7 +120,10 @@ export function bucketSeries(daily: Row[], g: Granularity, aggs: Record<string, 
 function linearFit(ys: number[]): { slope: number; intercept: number } {
   const n = ys.length;
   if (n === 0) return { slope: 0, intercept: 0 };
-  let sx = 0, sy = 0, sxy = 0, sxx = 0;
+  let sx = 0,
+    sy = 0,
+    sxy = 0,
+    sxx = 0;
   for (let i = 0; i < n; i++) {
     sx += i;
     sy += ys[i]!;

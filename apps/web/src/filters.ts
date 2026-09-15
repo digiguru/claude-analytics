@@ -120,7 +120,10 @@ export function isolateValue(facet: string, allValues: string[], value: string):
  *  unioning hidden sets intersects what's visible) — mirrors core's
  *  mergeFilterSpecs, for combining the page's member filter with a Quick
  *  filter by pick without needing the server to know about both separately. */
-export function mergeFilterSpecs(a: FilterSpec | null | undefined, b: FilterSpec | null | undefined): FilterSpec | null {
+export function mergeFilterSpecs(
+  a: FilterSpec | null | undefined,
+  b: FilterSpec | null | undefined,
+): FilterSpec | null {
   if (isEmptyFilter(a)) return b ?? null;
   if (isEmptyFilter(b)) return a ?? null;
   const hidden: Record<string, string[]> = {};

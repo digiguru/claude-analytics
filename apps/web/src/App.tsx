@@ -95,7 +95,15 @@ export function App() {
 
       {error && <p className="error">{error}</p>}
 
-      <ControlBar status={status} from={from} to={to} onFrom={setFrom} onTo={setTo} onChanged={refreshStatus} onError={setError}>
+      <ControlBar
+        status={status}
+        from={from}
+        to={to}
+        onFrom={setFrom}
+        onTo={setTo}
+        onChanged={refreshStatus}
+        onError={setError}
+      >
         <FilterMenu
           dimensions={status?.dimensions ?? []}
           timelineDimensions={status?.timelineDimensions ?? []}
@@ -123,7 +131,13 @@ export function App() {
       </div>
 
       {tab === "overview" && (
-        <OverviewView from={from} to={to} projectCycles={status?.projectCycles ?? []} filterQuery={filterQuery} onError={setError} />
+        <OverviewView
+          from={from}
+          to={to}
+          projectCycles={status?.projectCycles ?? []}
+          filterQuery={filterQuery}
+          onError={setError}
+        />
       )}
       {tab === "groups" && (
         <GroupsView
@@ -137,7 +151,13 @@ export function App() {
         />
       )}
       {tab === "members" && (
-        <MembersView from={from} to={to} filter={filter} projectCycles={status?.projectCycles ?? []} onError={setError} />
+        <MembersView
+          from={from}
+          to={to}
+          filter={filter}
+          projectCycles={status?.projectCycles ?? []}
+          onError={setError}
+        />
       )}
     </div>
   );

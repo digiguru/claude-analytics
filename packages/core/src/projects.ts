@@ -188,7 +188,9 @@ export function parseProjectsYaml(text: string): ProjectsParseResult {
         return;
       }
       if ((end ?? "9999-99-99") < API_FLOOR) {
-        warnings.push(`${who} (${email}): assignment ends before analytics data begins (${API_FLOOR}) — will never contribute cost.`);
+        warnings.push(
+          `${who} (${email}): assignment ends before analytics data begins (${API_FLOOR}) — will never contribute cost.`,
+        );
       }
 
       let allocation = 1;
@@ -213,7 +215,9 @@ export function parseProjectsYaml(text: string): ProjectsParseResult {
     const rawCycles = Array.isArray(raw.cycles) ? (raw.cycles as RawCycle[]) : [];
     if (rawCycles.length > 0) {
       if (projectMemberships.length === 0) {
-        warnings.push(`Project "${name}": has cycles but no valid members — dates can't be checked against any assignment.`);
+        warnings.push(
+          `Project "${name}": has cycles but no valid members — dates can't be checked against any assignment.`,
+        );
       }
 
       type ParsedCycle = { name: string; start: string; end: string | null };
@@ -301,13 +305,20 @@ export function parseProjectsYaml(text: string): ProjectsParseResult {
       }
 
       if (projectMemberships.length > 0) {
-        const spanStart = projectMemberships.reduce((s, m) => (m.start < s ? m.start : s), projectMemberships[0]!.start);
+        const spanStart = projectMemberships.reduce(
+          (s, m) => (m.start < s ? m.start : s),
+          projectMemberships[0]!.start,
+        );
         const spanEndOpen = projectMemberships.some((m) => m.end === null);
-        const spanEnd = spanEndOpen ? null : projectMemberships.reduce((s, m) => (m.end! > (s ?? "") ? m.end! : s), projectMemberships[0]!.end);
+        const spanEnd = spanEndOpen
+          ? null
+          : projectMemberships.reduce((s, m) => (m.end! > (s ?? "") ? m.end! : s), projectMemberships[0]!.end);
         for (const c of resolved) {
           const overlapsSpan = c.start <= (spanEnd ?? "9999-99-99") && spanStart <= (c.end ?? "9999-99-99");
           if (!overlapsSpan) {
-            warnings.push(`Project "${name}": cycle "${c.name}" (${c.start} – ${c.end ?? "ongoing"}) falls outside every member assignment — will show no cost.`);
+            warnings.push(
+              `Project "${name}": cycle "${c.name}" (${c.start} – ${c.end ?? "ongoing"}) falls outside every member assignment — will show no cost.`,
+            );
           }
         }
       }
@@ -326,7 +337,8 @@ export function parseProjectsYaml(text: string): ProjectsParseResult {
   for (const [email, list] of index) {
     for (let i = 0; i < list.length; i++) {
       for (let j = i + 1; j < list.length; j++) {
-        const a = list[i]!, b = list[j]!;
+        const a = list[i]!,
+          b = list[j]!;
         if (a.project === b.project) continue;
         const overlap = a.start <= (b.end ?? "9999-99-99") && b.start <= (a.end ?? "9999-99-99");
         if (overlap && a.allocation === 1 && b.allocation === 1) {
