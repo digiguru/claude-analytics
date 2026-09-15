@@ -7,10 +7,12 @@ import type { Attributes, Dimension, UserProductRow } from "./types.js";
 export function groupsToCsv(groups: GroupRow[], dimension: Dimension): string {
   const rows = groups.map((g) => ({
     [dimension]: g.key,
-    developers: g.developers,
+    seats: g.seats,
+    active_users: g.activeUsers,
     active_user_days: Math.round(g.activeUserDays * 10) / 10,
     total_cost_usd: (g.costCents / 100).toFixed(2),
-    avg_cost_per_developer_usd: (g.avgCostPerDeveloper / 100).toFixed(2),
+    avg_cost_per_seat_usd: (g.avgCostPerSeat / 100).toFixed(2),
+    avg_cost_per_active_user_usd: (g.avgCostPerActiveUser / 100).toFixed(2),
     total_tokens: g.totalTokens,
     requests: g.requests,
     chat_messages: g.chatMessages,

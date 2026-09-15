@@ -11,11 +11,13 @@ function rows(csv: string): Record<string, string>[] {
 function group(overrides: Partial<GroupRow> = {}): GroupRow {
   return {
     key: "Acme",
-    developers: 1,
+    seats: 1,
+    activeUsers: 1,
     activeUserDays: 1,
     costCents: 12345,
-    avgCostPerDeveloper: 12345,
-    avgTokensPerDeveloper: 10,
+    avgCostPerSeat: 12345,
+    avgCostPerActiveUser: 12345,
+    avgTokensPerActiveUser: 10,
     totalTokens: 10,
     inputTokens: 0,
     outputTokens: 0,
@@ -33,13 +35,16 @@ function group(overrides: Partial<GroupRow> = {}): GroupRow {
 }
 
 test("groupsToCsv: cents render as a fixed 2-decimal dollar string", () => {
-  const out = rows(groupsToCsv([group({ costCents: 12345, avgCostPerDeveloper: 6172.5 })], "project"));
+  const out = rows(
+    groupsToCsv([group({ costCents: 12345, avgCostPerSeat: 6172.5, avgCostPerActiveUser: 12345 })], "project"),
+  );
   expect(out[0]!.total_cost_usd).toBe("123.45");
-  expect(out[0]!.avg_cost_per_developer_usd).toBe("61.73");
+  expect(out[0]!.avg_cost_per_seat_usd).toBe("61.73");
+  expect(out[0]!.avg_cost_per_active_user_usd).toBe("123.45");
 });
 
 test("groupsToCsv: zero cost renders as 0.00, not blank", () => {
-  const out = rows(groupsToCsv([group({ costCents: 0, avgCostPerDeveloper: 0 })], "project"));
+  const out = rows(groupsToCsv([group({ costCents: 0, avgCostPerSeat: 0, avgCostPerActiveUser: 0 })], "project"));
   expect(out[0]!.total_cost_usd).toBe("0.00");
 });
 

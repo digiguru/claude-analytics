@@ -71,7 +71,10 @@ export interface Overview {
 
 export interface GroupRow {
   key: string;
-  developers: number;
+  /** Everyone who touched the group at all, including zero-activity assigned seats. */
+  seats: number;
+  /** Only those with real activity or spend — see #19. */
+  activeUsers: number;
   activeUserDays: number;
   costCents: number;
   totalTokens: number;
@@ -86,8 +89,9 @@ export interface GroupRow {
   coworkMessages: number;
   webSearches: number;
   costByProduct: Record<string, number>;
-  avgCostPerDeveloper: number;
-  avgTokensPerDeveloper: number;
+  avgCostPerSeat: number;
+  avgCostPerActiveUser: number;
+  avgTokensPerActiveUser: number;
 }
 /** One group's cost/tokens on one day — feeds the Groups page's cost-over-time chart. */
 export interface GroupDayRow {

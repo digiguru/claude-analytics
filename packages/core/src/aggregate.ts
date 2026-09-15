@@ -43,6 +43,31 @@ export interface Overview {
   heaviestDays: { date: string; costCents: number }[];
 }
 
+/**
+ * Shared tail for both overview builders below: derive the sorted timeseries,
+ * grand totals and heaviest-days list from the per-date/per-product maps each
+ * builder populates its own way. Extracted (per #28) so the two paths cannot
+ * silently drift apart the way they did in #15, where the org and per-user
+ * paths computed `totalTokens` differently and nothing forced them to agree.
+ */
+function finalizeOverview(byDate: Map<string, OverviewDay>, productTotals: Map<string, ProductTotal>): Overview {
+  const timeseries = [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+  const totalCostCents = timeseries.reduce((s, d) => s + d.costCents, 0);
+  const totalTokens = timeseries.reduce((s, d) => s + d.totalTokens, 0);
+  const heaviestDays = [...timeseries]
+    .map((d) => ({ date: d.date, costCents: d.costCents }))
+    .sort((a, b) => b.costCents - a.costCents)
+    .slice(0, 10);
+
+  return {
+    timeseries,
+    productTotals: [...productTotals.values()].sort((a, b) => b.costCents - a.costCents),
+    totalCostCents,
+    totalTokens,
+    heaviestDays,
+  };
+}
+
 export function buildOverview(summaries: OrgSummaryRow[], orgProducts: OrgProductRow[]): Overview {
   const byDate = new Map<string, OverviewDay>();
   const summaryByDate = new Map(summaries.map((s) => [s.date, s]));
@@ -74,21 +99,7 @@ export function buildOverview(summaries: OrgSummaryRow[], orgProducts: OrgProduc
     productTotals.set(p.product, pt);
   }
 
-  const timeseries = [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
-  const totalCostCents = timeseries.reduce((s, d) => s + d.costCents, 0);
-  const totalTokens = timeseries.reduce((s, d) => s + d.totalTokens, 0);
-  const heaviestDays = [...timeseries]
-    .map((d) => ({ date: d.date, costCents: d.costCents }))
-    .sort((a, b) => b.costCents - a.costCents)
-    .slice(0, 10);
-
-  return {
-    timeseries,
-    productTotals: [...productTotals.values()].sort((a, b) => b.costCents - a.costCents),
-    totalCostCents,
-    totalTokens,
-    heaviestDays,
-  };
+  return finalizeOverview(byDate, productTotals);
 }
 
 /**
@@ -146,21 +157,7 @@ export function buildOverviewFromUsers(userProducts: UserProductRow[], userDays:
     d.activeEmails = [...set];
   }
 
-  const timeseries = [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
-  const totalCostCents = timeseries.reduce((s, d) => s + d.costCents, 0);
-  const totalTokens = timeseries.reduce((s, d) => s + d.totalTokens, 0);
-  const heaviestDays = [...timeseries]
-    .map((d) => ({ date: d.date, costCents: d.costCents }))
-    .sort((a, b) => b.costCents - a.costCents)
-    .slice(0, 10);
-
-  return {
-    timeseries,
-    productTotals: [...productTotals.values()].sort((a, b) => b.costCents - a.costCents),
-    totalCostCents,
-    totalTokens,
-    heaviestDays,
-  };
+  return finalizeOverview(byDate, productTotals);
 }
 
 // ============================================================================
@@ -171,7 +168,13 @@ export function buildOverviewFromUsers(userProducts: UserProductRow[], userDays:
 
 export interface GroupRow {
   key: string;
-  developers: number;
+  /** Distinct emails that touched the group at all — a cost/usage row, or any
+   *  `user_day` row, active or not (the API returns one per assigned seat per
+   *  day). See #19: this is a per-seat figure, not a per-usage one. */
+  seats: number;
+  /** Distinct emails with real activity: a cost/usage row (they were billed),
+   *  or a `user_day` row with at least one non-zero activity metric. */
+  activeUsers: number;
   activeUserDays: number;
   costCents: number;
   totalTokens: number;
@@ -186,18 +189,24 @@ export interface GroupRow {
   coworkMessages: number;
   webSearches: number;
   costByProduct: Record<string, number>;
-  avgCostPerDeveloper: number;
-  avgTokensPerDeveloper: number;
+  /** Cost per seat — a licence/ROI figure. See #19. */
+  avgCostPerSeat: number;
+  /** Cost per person who actually used it — a usage-intensity figure. See #19. */
+  avgCostPerActiveUser: number;
+  avgTokensPerActiveUser: number;
 }
 
-interface GroupAcc extends Omit<GroupRow, "developers" | "avgCostPerDeveloper" | "avgTokensPerDeveloper"> {
-  emails: Set<string>;
+interface GroupAcc
+  extends Omit<GroupRow, "seats" | "activeUsers" | "avgCostPerSeat" | "avgCostPerActiveUser" | "avgTokensPerActiveUser"> {
+  seatEmails: Set<string>;
+  activeEmails: Set<string>;
 }
 
 function blankAcc(key: string): GroupAcc {
   return {
     key,
-    emails: new Set(),
+    seatEmails: new Set(),
+    activeEmails: new Set(),
     activeUserDays: 0,
     costCents: 0,
     totalTokens: 0,
@@ -344,10 +353,15 @@ export function scaleUserDayRow(r: UserDayRow, weight: number): UserDayRow {
  * split across multiple keys (e.g. two concurrent projects) contributes a
  * fractional share to each rather than being double-counted.
  *
- * `developers` counts distinct emails that touched the group at all (not a
- * fractional count) — someone split 60/40 across two projects counts as a
- * developer in both. `activeUserDays` accumulates fractionally to stay
- * consistent with cost.
+ * Per #19, `seats` and `activeUsers` answer two different questions rather
+ * than picking one: `seats` counts every distinct email that touched the
+ * group at all — including a `user_day` row the org assigned but the person
+ * never used (the API returns one such record per assigned seat per day) —
+ * for a licence/ROI view. `activeUsers` counts only emails with a cost/usage
+ * row or a `user_day` row with real activity, for a usage-intensity view.
+ * Neither is a fractional count: someone split 60/40 across two projects
+ * counts as a seat/active user in both. `activeUserDays` accumulates
+ * fractionally to stay consistent with cost.
  */
 export function aggregateByKeyer(
   userProducts: UserProductRow[],
@@ -367,7 +381,8 @@ export function aggregateByKeyer(
     if (!r.email) continue;
     for (const { key, weight } of keyer(r.email, r.date)) {
       const g = accFor(key);
-      g.emails.add(r.email);
+      g.seatEmails.add(r.email);
+      g.activeEmails.add(r.email); // a cost/usage row means they were billed, i.e. used it
       g.costCents += r.costCents * weight;
       g.totalTokens += r.totalTokens * weight;
       g.inputTokens += r.inputTokens * weight;
@@ -386,8 +401,11 @@ export function aggregateByKeyer(
         d.chatMessages + d.ccSessions + d.coworkMessages + d.designMessages + d.officeMessages + d.webSearches > 0;
       for (const { key, weight } of keyer(d.email, d.date)) {
         const g = accFor(key);
-        g.emails.add(d.email);
-        if (active) g.activeUserDays += weight;
+        g.seatEmails.add(d.email);
+        if (active) {
+          g.activeEmails.add(d.email);
+          g.activeUserDays += weight;
+        }
         g.chatMessages += d.chatMessages * weight;
         g.ccSessions += d.ccSessions * weight;
         g.ccLocAdded += d.ccLocAdded * weight;
@@ -401,14 +419,18 @@ export function aggregateByKeyer(
 
   return [...groups.values()]
     .map((g): GroupRow => {
-      const developers = g.emails.size;
-      const { emails, ...rest } = g;
-      void emails;
+      const seats = g.seatEmails.size;
+      const activeUsers = g.activeEmails.size;
+      const { seatEmails, activeEmails, ...rest } = g;
+      void seatEmails;
+      void activeEmails;
       return {
         ...rest,
-        developers,
-        avgCostPerDeveloper: developers ? g.costCents / developers : 0,
-        avgTokensPerDeveloper: developers ? g.totalTokens / developers : 0,
+        seats,
+        activeUsers,
+        avgCostPerSeat: seats ? g.costCents / seats : 0,
+        avgCostPerActiveUser: activeUsers ? g.costCents / activeUsers : 0,
+        avgTokensPerActiveUser: activeUsers ? g.totalTokens / activeUsers : 0,
       };
     })
     .sort((a, b) => b.costCents - a.costCents);

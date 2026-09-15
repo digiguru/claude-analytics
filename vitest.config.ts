@@ -9,12 +9,14 @@ export default defineConfig({
       reporter: ["text", "lcov"],
       // Phased in per sub-issue of the test coverage epic (#31): only the files a
       // given phase actually added tests for are gated here. Phase 1 (#33) covers
-      // map.ts, join.ts, export.ts; later phases raise thresholds for more of
-      // packages/core, then apps/server, apps/web, apps/cli in turn.
+      // map.ts, join.ts, export.ts; Phase 2 (#34) adds aggregate.ts. Later phases
+      // raise thresholds for the rest of packages/core, then apps/server, apps/web,
+      // apps/cli in turn.
       thresholds: {
         "packages/core/src/map.ts": { lines: 70, branches: 65 },
         "packages/core/src/join.ts": { lines: 70, branches: 65 },
         "packages/core/src/export.ts": { lines: 70, branches: 65 },
+        "packages/core/src/aggregate.ts": { lines: 80, branches: 75 },
       },
     },
     projects: [
