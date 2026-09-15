@@ -21,3 +21,9 @@ export.csv
 
 .DS_Store
 *.log
+
+# Playwright (#38)
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/

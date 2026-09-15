@@ -61,6 +61,7 @@ export function GroupsTableSection({
         <SortableTable
           columns={columns}
           rows={orderedGroups}
+          rowKey={(r) => r.key}
           initialSort={sortOrder === "size" ? metricKey : "key"}
           initialDesc={sortOrder === "size"}
         />
