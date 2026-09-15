@@ -149,6 +149,20 @@ test("buildFacets: builds one facet per CSV dimension plus timeline and Member f
   expect(byKey.get(EMAIL_FACET)!.values).toEqual(["a@x.com", "b@x.com"]); // sorted
 });
 
+// #30 item 8: the same email appearing more than once in `users` (e.g. a
+// synced range spanning a rename) used to produce duplicate values in the
+// email facet, which became duplicate React keys in FilterMenu's checkbox list.
+test("buildFacets: the email facet de-duplicates repeated emails", () => {
+  const users: UserListEntry[] = [
+    { email: "a@x.com", attributes: {} },
+    { email: "a@x.com", attributes: {} },
+    { email: "b@x.com", attributes: {} },
+  ];
+  const facets = buildFacets(users, [], []);
+  const emailFacet = facets.find((f) => f.key === EMAIL_FACET)!;
+  expect(emailFacet.values).toEqual(["a@x.com", "b@x.com"]);
+});
+
 // ---- toggleValue / setFacetAll / isolateValue / mergeFilterSpecs / filterToQuery ----
 
 test("toggleValue: adds a value to hidden, then removes it again", () => {

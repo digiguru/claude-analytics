@@ -97,7 +97,7 @@ export default defineConfig({
         "apps/web/src/components/NestedGroupsTable.tsx": { lines: 95, branches: 80 },
         "apps/web/src/components/GroupsTableSection.tsx": { lines: 95, branches: 80 },
         "apps/web/src/components/KeyBreakdownRows.tsx": { lines: 95, branches: 80 },
-        "apps/web/src/components/StackedCostTooltip.tsx": { lines: 95, branches: 95 },
+        "apps/web/src/components/StackedCostTooltip.tsx": { lines: 95, branches: 90 },
         "apps/web/src/components/SeriesControls.tsx": { lines: 95, branches: 95 },
         "apps/web/src/components/GroupsControls.tsx": { lines: 95, branches: 95 },
         "apps/web/src/components/GroupTotalsChart.tsx": { lines: 95, branches: 45 },

@@ -298,6 +298,20 @@ test("summarizeMember: matches case-insensitively, sums cost/tokens per day and 
   expect(summary.daily.map((d) => d.date)).toEqual(["2026-06-01", "2026-06-02"]);
 });
 
+// #30 item 12: MemberDay omitted ccCommits/ccPrs even though the summary
+// totals include them, so a day's series couldn't be reconciled against it.
+test("summarizeMember: daily rows carry ccCommits/ccPrs, reconcilable against the totals", () => {
+  const userDays: UserDayRow[] = [
+    userDayRow({ date: "2026-06-01", email: "a@x.com", ccCommits: 2, ccPrs: 1 }),
+    userDayRow({ date: "2026-06-02", email: "a@x.com", ccCommits: 3, ccPrs: 0 }),
+  ];
+  const summary = summarizeMember([], userDays, "a@x.com", null);
+  expect(summary.daily.map((d) => d.ccCommits)).toEqual([2, 3]);
+  expect(summary.daily.map((d) => d.ccPrs)).toEqual([1, 0]);
+  expect(summary.daily.reduce((sum, d) => sum + d.ccCommits, 0)).toBe(summary.ccCommits);
+  expect(summary.daily.reduce((sum, d) => sum + d.ccPrs, 0)).toBe(summary.ccPrs);
+});
+
 test("summarizeMember: activeDays only counts days with a non-zero activity metric", () => {
   const userDays: UserDayRow[] = [
     userDayRow({ date: "2026-06-01", email: "a@x.com", chatMessages: 2 }),

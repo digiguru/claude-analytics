@@ -95,7 +95,11 @@ export function buildFacets(
   facets.push({
     key: EMAIL_FACET,
     label: "Member (email)",
-    values: users.map((u) => u.email).sort((a, b) => a.localeCompare(b)),
+    // De-duplicated — the same email can appear more than once across
+    // `users` (e.g. a synced range spanning a rename), and duplicates here
+    // become duplicate React keys at FilterMenu's checkbox list. See #30
+    // item 8.
+    values: [...new Set(users.map((u) => u.email))].sort((a, b) => a.localeCompare(b)),
   });
   return facets;
 }

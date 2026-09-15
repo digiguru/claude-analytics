@@ -18,7 +18,25 @@ export interface CsvParseResult {
  */
 export function parseAttributesCsv(text: string): CsvParseResult {
   const records = parse(text, {
-    columns: (header: string[]) => header.map((h) => h.trim()),
+    // A duplicate column name would otherwise silently collapse to its last
+    // value per row (csv-parse builds each record as an object keyed by
+    // these names) — thrown here, before any row is parsed, rather than
+    // discovered later as quietly-wrong data. See #30 item 14.
+    columns: (header: string[]) => {
+      const trimmed = header.map((h) => h.trim());
+      const seen = new Set<string>();
+      const dupes = new Set<string>();
+      for (const h of trimmed) {
+        if (seen.has(h)) dupes.add(h);
+        else seen.add(h);
+      }
+      if (dupes.size > 0) {
+        throw new Error(
+          `CSV has duplicate column name(s): ${[...dupes].join(", ")}. Each column must be unique — rename or remove the duplicate.`,
+        );
+      }
+      return trimmed;
+    },
     skip_empty_lines: true,
     trim: true,
   }) as Record<string, string>[];

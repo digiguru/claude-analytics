@@ -85,6 +85,30 @@ projects:
   expect(warnings.some((w) => w.includes("duplicate cycle name"))).toBe(true);
 });
 
+// #30 item 11: a generated "Name (N)" disambiguation could itself collide
+// with a real cycle name declared elsewhere in the project, producing two
+// cycles both named "Sprint (2)" — which then merge silently as group keys.
+test("a disambiguated cycle name that collides with a real declared name is disambiguated further", () => {
+  const yaml = `
+projects:
+  - name: P
+    cycles:
+      - name: Sprint
+        start: 2026-01-01
+      - name: Sprint
+        start: 2026-02-01
+      - name: Sprint (2)
+        start: 2026-03-01
+    members:
+      - email: a@x.com
+        start: 2026-01-01
+`;
+  const { cycles } = parseProjectsYaml(yaml);
+  const names = cyclesFor(cycles, "P").map((c) => c.name);
+  expect(new Set(names).size).toBe(names.length); // no two cycles share a name
+  expect(names).toEqual(["Sprint", "Sprint (2)", "Sprint (2) (2)"]);
+});
+
 test("cycleFor: the next-start day belongs to the new cycle, not the old one", () => {
   const { cycles } = parseProjectsYaml(YAML_BASIC_CYCLES);
   expect(cycleFor(cycles, "Flow Team #1", "2026-04-13")?.name).toBe("Discovery");

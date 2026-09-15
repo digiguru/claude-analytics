@@ -140,7 +140,13 @@ export function parseProjectCycles(
 
   type ParsedCycle = { name: string; start: string; end: string | null };
   const parsed: ParsedCycle[] = [];
-  const seenCycleNames = new Map<string, number>(); // lowercased name -> count so far
+  const seenCycleNames = new Map<string, number>(); // lowercased base name -> count so far
+  // Every final (post-dedup) name assigned so far, lowercased — a generated
+  // "Name (N)" can itself collide with a real cycle name or an earlier
+  // dedup (e.g. "Sprint", "Sprint", "Sprint (2)" declared in that order all
+  // resolve to "count" 1 for their own base name, so checking seenCycleNames
+  // alone missed that "Sprint (2)" was already taken). See #30 item 11.
+  const usedCycleNames = new Set<string>();
 
   list.forEach((c, cycleIdx) => {
     const who = `Project "${name}", cycle #${cycleIdx + 1}`;
@@ -175,11 +181,25 @@ export function parseProjectCycles(
     const lower = cname.toLowerCase();
     const seenCount = (seenCycleNames.get(lower) ?? 0) + 1;
     seenCycleNames.set(lower, seenCount);
-    if (seenCount > 1) {
-      const deduped = `${cname} (${seenCount})`;
+    // Only bumping the count for repeats of this exact base name isn't
+    // enough: a name that's never repeated itself (seenCount === 1) can
+    // still collide with an *earlier* dedup's generated name (e.g. cycles
+    // "Sprint", "Sprint", "Sprint (2)" declared in that order — the third
+    // one's own base name "Sprint (2)" was never seen before, but the
+    // second one already claimed that exact final name). Checking
+    // usedCycleNames unconditionally, not just inside the `seenCount > 1`
+    // branch, catches that case too.
+    if (seenCount > 1 || usedCycleNames.has(lower)) {
+      let suffix = Math.max(seenCount, 2);
+      let deduped = `${cname} (${suffix})`;
+      while (usedCycleNames.has(deduped.toLowerCase())) {
+        suffix += 1;
+        deduped = `${cname} (${suffix})`;
+      }
       warnings.push(`Project "${name}": duplicate cycle name "${cname}" — using "${deduped}" for this later one.`);
       cname = deduped;
     }
+    usedCycleNames.add(cname.toLowerCase());
 
     parsed.push({ name: cname, start: cstart, end: cend });
   });

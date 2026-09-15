@@ -33,3 +33,20 @@ test("StackedCostTooltip: a missing value is treated as 0", () => {
   render(<StackedCostTooltip active payload={[{ dataKey: "Alpha", name: "Alpha" }]} />);
   expect(screen.getAllByText("$0.00").length).toBe(2); // the row and the total
 });
+
+// #30 item 7: dataKey is optional in recharts' own payload type; two rows
+// both missing it used to share `key={undefined}`. Falling back to name/index
+// keeps every row's key unique and each still renders.
+test("StackedCostTooltip: rows with no dataKey at all still all render, keyed distinctly", () => {
+  render(
+    <StackedCostTooltip
+      active
+      payload={[
+        { name: "Alpha", value: 10 },
+        { name: "Beta", value: 5 },
+      ]}
+    />,
+  );
+  expect(screen.getByText("Alpha")).toBeInTheDocument();
+  expect(screen.getByText("Beta")).toBeInTheDocument();
+});
