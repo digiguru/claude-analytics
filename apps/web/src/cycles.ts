@@ -14,11 +14,23 @@ export const NO_CYCLE_LABEL = "no cycle";
 
 type Row = Record<string, number | string>;
 
-/** One bucket-to-be: a label, a predicate over a raw "YYYY-MM-DD" date string,
- *  and its running sums (numeric fields only). */
+/** Calendar day arithmetic on "YYYY-MM-DD" strings (UTC, so no DST surprises). */
+function addDays(date: string, delta: number): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + delta);
+  return d.toISOString().slice(0, 10);
+}
+function daysInclusive(start: string, end: string): number {
+  const ms = new Date(`${end}T00:00:00Z`).getTime() - new Date(`${start}T00:00:00Z`).getTime();
+  return Math.max(1, Math.round(ms / 86_400_000) + 1);
+}
+
+/** One bucket-to-be: a label, its calendar window (inclusive — used for both
+ *  matching rows and reporting a real day-count), and its running sums. */
 interface Bucket {
   label: string;
-  matches: (date: string) => boolean;
+  start: string;
+  end: string;
   sums: Record<string, number>;
   n: number;
 }
@@ -35,16 +47,29 @@ interface Bucket {
  * contract; `date` on each row is the bucket's display label (cycle name, or
  * "(no cycle N)"), so the existing `<XAxis dataKey="date">` needs no change —
  * each label is unique, which a category axis and ReferenceArea both require.
+ *
+ * Each row also carries `days`: the bucket's real calendar span (its cycle's
+ * own start/end, not a count of days that happened to have cost) — cycles are
+ * rarely equal length, so a chart wanting bar *width* proportional to duration
+ * needs this rather than assuming every bucket is the same size (see
+ * VariableWidthBars, used for the "Cycle" granularity chart).
  */
 export function bucketByCycle(daily: Row[], cycles: CycleDef[]): Row[] {
-  const slots: Pick<Bucket, "label" | "matches">[] = [];
+  const dates = daily.map((r) => String(r.date));
+  const minDate = dates[0]; // `daily` is sorted ascending by the caller
+  const maxDate = dates[dates.length - 1];
+
+  const slots: Pick<Bucket, "label" | "start" | "end">[] = [];
   let gapNumber = 0;
+  // A gap's true bounds: the day after the previous cycle's end (or the
+  // earliest date actually in range, for the leading gap) through the day
+  // before the next cycle's start (or the latest date in range, trailing).
   const addGap = (after: string | null, before: string | null) => {
+    const start = after !== null ? addDays(after, 1) : minDate;
+    const end = before !== null ? addDays(before, -1) : maxDate;
+    if (!start || !end || start > end) return; // no data at all, or an empty window — nothing to show
     gapNumber += 1;
-    slots.push({
-      label: `(${NO_CYCLE_LABEL} ${gapNumber})`, // "(no cycle 1)", "(no cycle 2)", ...
-      matches: (date) => (after === null || date > after) && (before === null || date < before),
-    });
+    slots.push({ label: `(${NO_CYCLE_LABEL} ${gapNumber})`, start, end }); // "(no cycle 1)", ...
   };
 
   if (cycles.length === 0) {
@@ -53,7 +78,7 @@ export function bucketByCycle(daily: Row[], cycles: CycleDef[]): Row[] {
     cycles.forEach((c, i) => {
       const prev = cycles[i - 1];
       addGap(prev ? prev.end : null, c.start); // before this cycle (or before the first)
-      slots.push({ label: c.name, matches: (date) => c.start <= date && (c.end === null || date <= c.end) });
+      slots.push({ label: c.name, start: c.start, end: c.end ?? maxDate ?? c.start });
     });
     const last = cycles[cycles.length - 1]!;
     if (last.end !== null) addGap(last.end, null); // after the last cycle, only if it actually ended
@@ -62,7 +87,7 @@ export function bucketByCycle(daily: Row[], cycles: CycleDef[]): Row[] {
   const buckets: Bucket[] = slots.map((s) => ({ ...s, sums: {}, n: 0 }));
   for (const row of daily) {
     const date = String(row.date);
-    const bucket = buckets.find((b) => b.matches(date));
+    const bucket = buckets.find((b) => date >= b.start && date <= b.end);
     if (!bucket) continue; // shouldn't happen — slots cover every date — but never throw over a chart
     bucket.n += 1;
     for (const [k, v] of Object.entries(row)) {
@@ -71,7 +96,9 @@ export function bucketByCycle(daily: Row[], cycles: CycleDef[]): Row[] {
     }
   }
 
-  return buckets.filter((b) => b.n > 0).map((b) => ({ date: b.label, ...b.sums }));
+  return buckets
+    .filter((b) => b.n > 0)
+    .map((b) => ({ date: b.label, days: daysInclusive(b.start, b.end), ...b.sums }));
 }
 
 /**

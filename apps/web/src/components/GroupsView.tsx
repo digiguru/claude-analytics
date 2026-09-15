@@ -22,6 +22,7 @@ import { buildFacets, EMAIL_FACET, isolateValue, mergeFilterSpecs, type FilterSp
 import { CycleRail } from "./CycleRail.js";
 import { NestedGroupsTable } from "./NestedGroupsTable.js";
 import { SortableTable, type Column } from "./SortableTable.js";
+import { VariableWidthBars } from "./VariableWidthBars.js";
 
 /** Chart/table ordering: by metric magnitude ("size", default) or by group name ("alpha"). */
 type SortOrder = "size" | "alpha";
@@ -403,50 +404,57 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
               </button>
             )}
           </div>
-          <div style={{ height: 280 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={stacked.rows} margin={CHART_MARGIN}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#2a2f3a" />
-                {annotateBands &&
-                  scopeCycles.map((c, i) => {
-                    const span = snapBand(c, chartLabels, bucket);
-                    if (!span) return null;
-                    const x1Idx = chartLabels.indexOf(span.x1);
-                    const x2Idx = chartLabels.indexOf(span.x2);
-                    const wide = x2Idx - x1Idx >= 1;
-                    return (
-                      <ReferenceArea
-                        key={c.name}
-                        x1={span.x1}
-                        x2={span.x2}
-                        isFront={false}
-                        fill="#ffffff"
-                        fillOpacity={i % 2 ? 0.07 : 0.04}
-                        stroke="#2a2f3a"
-                        strokeDasharray="3 3"
-                        label={wide ? { value: wrapLabel(c.name, 18, 1)[0], position: "insideTopLeft", fill: "#9aa3b2", fontSize: 11 } : undefined}
-                      />
-                    );
-                  })}
-                <XAxis
-                  dataKey="date"
-                  stroke="#9aa3b2"
-                  fontSize={11}
-                  tickFormatter={bucket === "cycle" ? (v: string) => v : undefined}
-                  {...xAxisProps(stacked.rows.length, 10, { rotateWhenShort: bucket !== "cycle", forceAllTicks: bucket === "cycle" })}
-                />
-                <YAxis stroke="#9aa3b2" fontSize={12} width={Y_AXIS_WIDTH} />
-                <Tooltip
-                  contentStyle={{ background: "#1a1d24", border: "1px solid #2a2f3a" }}
-                  formatter={(v: number) => usd(v * 100)}
-                />
-                <Legend />
-                {stacked.keys.map((key) => (
-                  <Bar key={key} dataKey={key} stackId="groups" fill={stackColor.get(key)} name={key} />
-                ))}
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+          {bucket === "cycle" ? (
+            // Recharts' BarChart always gives every category an equal-width band,
+            // which would misrepresent cycles of very different lengths — use a
+            // hand-built chart instead where bar width is proportional to each
+            // cycle's real day-count (see VariableWidthBars).
+            <VariableWidthBars rows={stacked.rows} keys={stacked.keys} colors={stackColor} height={280} />
+          ) : (
+            <div style={{ height: 280 }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={stacked.rows} margin={CHART_MARGIN}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#2a2f3a" />
+                  {annotateBands &&
+                    scopeCycles.map((c, i) => {
+                      const span = snapBand(c, chartLabels, bucket);
+                      if (!span) return null;
+                      const x1Idx = chartLabels.indexOf(span.x1);
+                      const x2Idx = chartLabels.indexOf(span.x2);
+                      const wide = x2Idx - x1Idx >= 1;
+                      return (
+                        <ReferenceArea
+                          key={c.name}
+                          x1={span.x1}
+                          x2={span.x2}
+                          isFront={false}
+                          fill="#ffffff"
+                          fillOpacity={i % 2 ? 0.07 : 0.04}
+                          stroke="#2a2f3a"
+                          strokeDasharray="3 3"
+                          label={wide ? { value: wrapLabel(c.name, 18, 1)[0], position: "insideTopLeft", fill: "#9aa3b2", fontSize: 11 } : undefined}
+                        />
+                      );
+                    })}
+                  <XAxis
+                    dataKey="date"
+                    stroke="#9aa3b2"
+                    fontSize={11}
+                    {...xAxisProps(stacked.rows.length, 10, { rotateWhenShort: true })}
+                  />
+                  <YAxis stroke="#9aa3b2" fontSize={12} width={Y_AXIS_WIDTH} />
+                  <Tooltip
+                    contentStyle={{ background: "#1a1d24", border: "1px solid #2a2f3a" }}
+                    formatter={(v: number) => usd(v * 100)}
+                  />
+                  <Legend />
+                  {stacked.keys.map((key) => (
+                    <Bar key={key} dataKey={key} stackId="groups" fill={stackColor.get(key)} name={key} />
+                  ))}
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
           {showCycles && bucket !== "cycle" && railProjects.length > 0 && (
             <CycleRail
               labels={chartLabels}
