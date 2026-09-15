@@ -231,7 +231,16 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ from, to }),
     }).then(
-      json<{ ok: boolean; summaryDays: number; activityDays: number; userProductRows: number; orgProductRows: number }>,
+      json<{
+        ok: boolean;
+        summaryDays: number;
+        activityDays: number;
+        userProductRows: number;
+        orgProductRows: number;
+        /** null when the requested range had nothing to fetch (before MIN_DATE, or entirely
+         *  inside the reporting lag) — distinct from "fetched and found nothing". See #25. */
+        effectiveRange: { from: string; to: string } | null;
+      }>,
     ),
   overview: (from?: string, to?: string, filter?: string) =>
     fetch(`/api/overview${qs({ from, to, filter })}`).then(json<Overview>),

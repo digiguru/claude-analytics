@@ -122,11 +122,17 @@ program
     const db = openDb();
     try {
       const r = await fetchRange(client, db, opts.from, opts.to, (p) => console.log(`  [${p.step}] ${p.detail}`));
-      console.log(
-        `\nSynced ${r.effectiveRange.from}..${r.effectiveRange.to}: ` +
-          `${r.summaryDays} summary day(s), ${r.activityDays} activity day(s), ` +
-          `${r.userProductRows} user×product row(s), ${r.orgProductRows} org×product row(s).`,
-      );
+      if (r.effectiveRange) {
+        console.log(
+          `\nSynced ${r.effectiveRange.from}..${r.effectiveRange.to}: ` +
+            `${r.summaryDays} summary day(s), ${r.activityDays} activity day(s), ` +
+            `${r.userProductRows} user×product row(s), ${r.orgProductRows} org×product row(s).`,
+        );
+      } else {
+        console.log(
+          `\nNothing to sync: ${opts.from}..${opts.to} falls entirely before analytics data begins, or within the reporting lag.`,
+        );
+      }
       if (r.unparseableAmounts > 0) {
         console.warn(
           `  WARNING: ${r.unparseableAmounts} cost amount(s) failed to parse and were recorded as $0. ` +

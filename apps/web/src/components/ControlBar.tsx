@@ -29,7 +29,11 @@ export function ControlBar({ status, from, to, onFrom, onTo, onChanged, onError,
     onError(null);
     try {
       const r = await api.sync(from, to);
-      setNote(`Synced ${r.activityDays} activity day(s), ${r.userProductRows} user×product row(s).`);
+      setNote(
+        r.effectiveRange
+          ? `Synced ${r.activityDays} activity day(s), ${r.userProductRows} user×product row(s).`
+          : "Nothing to sync — that range is before analytics data begins, or within the reporting lag.",
+      );
       await onChanged();
     } catch (e) {
       onError(e instanceof Error ? e.message : String(e));
