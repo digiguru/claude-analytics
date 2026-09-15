@@ -25,7 +25,14 @@ export interface SyncResult {
   orgProductRows: number;
   /** Cost amounts that failed to parse as a decimal and were recorded as 0 (see parseCentsChecked). */
   unparseableAmounts: number;
-  effectiveRange: { from: string; to: string };
+  /**
+   * The range actually fetched, or `null` when the requested [from, to] fell
+   * entirely before MIN_DATE or inside the reporting lag — nothing to fetch,
+   * not "fetched and found nothing". See #25: previously this returned a
+   * nonsensical `{ from: start, to }` where `to` was *before* `from`, which
+   * the CLI/UI had no way to distinguish from a real (if empty) result.
+   */
+  effectiveRange: { from: string; to: string } | null;
 }
 
 function utcToday(): string {
@@ -69,7 +76,10 @@ export async function fetchRange(
   let orgProductRows = 0;
   let unparseableAmounts = 0;
 
-  // 1) Org summaries (single call, range up to 366 days)
+  // 1) Org summaries (single call, range up to 366 days). `ending_date` is
+  // exclusive per the Analytics API reference, hence nextDay — confirmed
+  // against docs, consistent with the cost/usage endpoints' `ending_at`
+  // below (also exclusive, hence dayAfter). See #25 item 5.
   if (start <= activityEnd) {
     onProgress?.({ step: "summaries", detail: `${start}..${activityEnd}` });
     const summaries = await client.getSummaries(start, nextDay(activityEnd));
@@ -115,12 +125,13 @@ export async function fetchRange(
     }
   }
 
+  const fetchedAnything = start <= activityEnd || start <= costEnd;
   return {
     summaryDays,
     activityDays,
     userProductRows,
     orgProductRows,
     unparseableAmounts,
-    effectiveRange: { from: start, to: maxDate(activityEnd, costEnd) },
+    effectiveRange: fetchedAnything ? { from: start, to: maxDate(activityEnd, costEnd) } : null,
   };
 }
