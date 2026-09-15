@@ -111,6 +111,16 @@ export function VariableWidthBars({ rows, keys, colors, height = 260 }: Props) {
           );
         })}
       </div>
+      {keys.length > 0 && (
+        <div className="varwidth-legend">
+          {keys.map((k) => (
+            <span key={k} className="varwidth-legend-item">
+              <span className="varwidth-legend-swatch" style={{ background: colors.get(k) ?? "#5c6270" }} />
+              {k}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
