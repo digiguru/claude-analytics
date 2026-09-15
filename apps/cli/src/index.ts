@@ -7,6 +7,7 @@ import {
   buildOverview,
   createClient,
   csvKeyer,
+  cyclesFor,
   dimensionsOf,
   fetchRange,
   groupsToCsv,
@@ -24,6 +25,7 @@ import {
   type AttributeMap,
   type Attributes,
   type MembershipIndex,
+  type ProjectsParseResult,
   type RowKeyer,
 } from "@claude-analytics/core";
 import { loadConfig } from "./config.js";
@@ -92,6 +94,7 @@ function loadProjectsOptional(override?: string): MembershipIndex {
     return new Map();
   }
 }
+
 
 interface GroupSelector {
   id: string;
@@ -341,22 +344,23 @@ program
 
 program
   .command("projects")
-  .description("Load and validate the projects/teams YAML — lists every project and any warnings.")
+  .description("Load and validate the projects/teams YAML — lists every project, its cycles, and any warnings.")
   .option("--projects <path>", "projects YAML (overrides PROJECTS_PATH)")
-  .action((opts: { projects?: string }) => {
+  .option("--project <name>", "only show this project's cycles")
+  .action((opts: { projects?: string; project?: string }) => {
     const path = opts.projects ?? loadConfig().projectsPath;
     if (!path) {
       console.log("No projects file configured. Pass --projects <path> or set PROJECTS_PATH in .env.");
       return;
     }
-    let result;
+    let result: ProjectsParseResult;
     try {
       result = loadProjectsYaml(path);
     } catch (err) {
       console.error(`Failed to load ${path}: ${err instanceof Error ? err.message : String(err)}`);
       process.exit(1);
     }
-    const { index, projectCount, memberCount, warnings } = result;
+    const { index, cycles, projectCount, memberCount, cycleCount, warnings } = result;
     if (projectCount === 0) {
       console.log(`No projects found in ${path}.`);
       return;
@@ -372,17 +376,37 @@ program
         if (p.end !== null && (m.end === null || m.end > p.end)) p.end = m.end;
       }
     }
-    console.log(`\n${path}: ${projectCount} project(s), ${memberCount} membership(s).\n`);
+    console.log(`\n${path}: ${projectCount} project(s), ${memberCount} membership(s), ${cycleCount} cycle(s).\n`);
     console.table(
       [...byProject.entries()].map(([project, p]) => ({
         project,
         team: p.team,
         client: p.client,
         members: p.members,
+        cycles: cycles.get(project)?.length ?? 0,
         from: p.start,
         to: p.end ?? "(ongoing)",
       })),
     );
+
+    if (cycleCount > 0) {
+      const projectNames = opts.project ? [opts.project] : [...cycles.keys()];
+      const rows = projectNames.flatMap((project) =>
+        cyclesFor(cycles, project).map((c) => ({
+          project,
+          cycle: c.name,
+          from: c.start,
+          to: c.end === null ? "(ongoing)" : c.derivedEnd ? `${c.end} (→ next)` : c.end,
+        })),
+      );
+      if (rows.length) {
+        console.log(`\nCycles${opts.project ? ` — ${opts.project}` : ""}:\n`);
+        console.table(rows);
+      } else if (opts.project) {
+        console.log(`\nNo cycles found for "${opts.project}".`);
+      }
+    }
+
     if (warnings.length) {
       console.log(`\n${warnings.length} warning(s):`);
       for (const w of warnings) console.log(`  - ${w}`);

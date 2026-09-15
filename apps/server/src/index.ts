@@ -14,6 +14,7 @@ import {
   buildOverviewFromUsers,
   createClient,
   csvKeyer,
+  cyclesFor,
   dimensionsOf,
   distinctFacetValues,
   fetchRange,
@@ -25,9 +26,11 @@ import {
   membersDailyCost,
   membersDailyToCsv,
   membersDailyLongToCsv,
+  mergeFilterSpecs,
   parseAttributesCsv,
   parseFilterParam,
   parseProjectsYaml,
+  projectScopeSpec,
   resolveDimension,
   resolveTimelineDimension,
   scaleUserDayRow,
@@ -37,6 +40,7 @@ import {
   timelineKeyer,
   TIMELINE_DIMENSION_LABELS,
   TIMELINE_FACETS,
+  UNASSIGNED_KEY,
   type FilterSpec,
   type RowKeyer,
 } from "@claude-analytics/core";
@@ -82,6 +86,21 @@ function emailPredicate(spec: FilterSpec | null): (email: string) => boolean {
 }
 
 /**
+ * Resolve a `project` query value into a FilterSpec that hides every other
+ * project (see projectScopeSpec), merged with the active member `filter` —
+ * union, not double-wrapping, so cross-facet scaling never applies twice.
+ * Throws on an unknown project name.
+ */
+function resolveProjectScope(project: string | undefined, filterSpec: FilterSpec | null): FilterSpec | null {
+  if (!project) return filterSpec;
+  const known = distinctFacetValues(state.memberships, "project");
+  if (!known.includes(project)) {
+    throw new Error(`Unknown project "${project}". Available: ${known.join(", ")}.`);
+  }
+  return mergeFilterSpecs(filterSpec, projectScopeSpec(state.memberships, project));
+}
+
+/**
  * Group-by-aware keyer: the CSV/timeline keyer for `selector`, with any hidden
  * timeline values excluded per {@link applyTimelineFilterToKeyer}'s rules (same
  * facet as the groupBy -> dropped outright; a different timeline facet ->
@@ -120,6 +139,12 @@ app.get("/api/status", async () => {
         values: distinctFacetValues(state.memberships, facet),
       }))
     : [];
+  // Static cycle definitions per project (only those that declared any), for the
+  // Groups page's Cycle granularity and the cycle annotations on all three tabs.
+  const projectNames = distinctFacetValues(state.memberships, "project").filter((p) => p !== UNASSIGNED_KEY);
+  const projectCycles = projectNames
+    .map((project) => ({ project, cycles: cyclesFor(state.cycles, project) }))
+    .filter((p) => p.cycles.length > 0);
   return {
     csvLoaded: state.attributes.size > 0,
     csvSource: state.csvSource,
@@ -130,6 +155,8 @@ app.get("/api/status", async () => {
     projectCount: state.projectCount,
     projectWarnings: state.projectWarnings,
     timelineDimensions,
+    projectCycles,
+    cycleCount: state.cycleCount,
     cachedDateRange: range,
     developerCount: state.db.distinctEmails().length,
     apiKeyConfigured: Boolean(state.config.apiKey),
@@ -172,17 +199,18 @@ app.get<{ Querystring: RangeQuery & { filter?: string } }>("/api/overview", asyn
   return { ...buildOverviewFromUsers(userProducts, userDays), filtered: true };
 });
 
-app.get<{ Querystring: RangeQuery & { groupBy?: string; product?: string; filter?: string } }>(
+app.get<{ Querystring: RangeQuery & { groupBy?: string; product?: string; filter?: string; project?: string } }>(
   "/api/groups",
   async (req, reply) => {
     let selector: GroupSelector;
+    let spec: FilterSpec | null;
     try {
       selector = resolveGroupBy(req.query.groupBy);
+      spec = resolveProjectScope(req.query.project, parseFilterParam(req.query.filter));
     } catch (err) {
       return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
     }
-    const { from, to, product, filter } = req.query;
-    const spec = parseFilterParam(filter);
+    const { from, to, product } = req.query;
     const emailPred = emailPredicate(spec);
     const keyer = filteredKeyer(selector, spec);
     const userProducts = state.db.getUserProducts({ from, to }).filter((r) => emailPred(r.email));
@@ -191,7 +219,24 @@ app.get<{ Querystring: RangeQuery & { groupBy?: string; product?: string; filter
     const { rows: timeseries, keys } = aggregateByKeyerOverTime(userProducts, keyer, product);
     const emails = new Set(state.db.distinctEmails());
     const unmatched = [...emails].filter((e) => !state.attributes.has(e));
-    return { dimension: selector.id, product: product ?? null, groups, timeseries, keys, unmatchedCount: unmatched.length };
+    // Projects with non-zero cost under the current scope (cost-desc, no Unassigned) —
+    // drives the web UI's auto-unlock of Cycle granularity/bands when it settles to one.
+    const activeProjects = state.memberships.size
+      ? aggregateByKeyerOverTime(
+          userProducts,
+          applyTimelineFilterToKeyer(timelineKeyer(state.memberships, "project"), "@project", state.memberships, spec),
+          product,
+        ).keys.filter((k) => k !== UNASSIGNED_KEY)
+      : [];
+    return {
+      dimension: selector.id,
+      product: product ?? null,
+      groups,
+      timeseries,
+      keys,
+      activeProjects,
+      unmatchedCount: unmatched.length,
+    };
   },
 );
 
@@ -224,25 +269,36 @@ app.get<{ Querystring: RangeQuery }>("/api/users", async (req) => {
 app.get<{ Params: { email: string }; Querystring: RangeQuery }>("/api/members/:email", async (req) => {
   const email = decodeURIComponent(req.params.email).toLowerCase();
   const { from, to } = req.query;
-  return summarizeMember(
+  const summary = summarizeMember(
     state.db.getUserProducts({ from, to, email }),
     state.db.getUserDays({ from, to, email }),
     email,
     attributesFor(state.attributes, email),
   );
+  // Which project(s) this person overlapped with in range — lets the Members
+  // chart draw that project's cycles (bands if exactly one, else a lane per
+  // project). Same "overlap" approximation as /api/users; not used for money.
+  const range = state.db.dateRange();
+  const projects = state.memberships.size
+    ? activeFacetKeysInRange(state.memberships, email, from ?? range?.min ?? "0000-01-01", to ?? range?.max ?? "9999-12-31", "project").filter(
+        (p) => p !== UNASSIGNED_KEY,
+      )
+    : [];
+  return { ...summary, projects };
 });
 
-app.get<{ Querystring: RangeQuery & { groupBy?: string; product?: string; filter?: string } }>(
+app.get<{ Querystring: RangeQuery & { groupBy?: string; product?: string; filter?: string; project?: string } }>(
   "/api/export",
   async (req, reply) => {
     let selector: GroupSelector;
+    let spec: FilterSpec | null;
     try {
       selector = resolveGroupBy(req.query.groupBy);
+      spec = resolveProjectScope(req.query.project, parseFilterParam(req.query.filter));
     } catch (err) {
       return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
     }
-    const { from, to, product, filter } = req.query;
-    const spec = parseFilterParam(filter);
+    const { from, to, product } = req.query;
     const emailPred = emailPredicate(spec);
     const keyer = filteredKeyer(selector, spec);
     const groups = aggregateByKeyer(
@@ -258,17 +314,18 @@ app.get<{ Querystring: RangeQuery & { groupBy?: string; product?: string; filter
   },
 );
 
-app.get<{ Querystring: RangeQuery & { groupBy?: string; product?: string; filter?: string } }>(
+app.get<{ Querystring: RangeQuery & { groupBy?: string; product?: string; filter?: string; project?: string } }>(
   "/api/export/groups-daily",
   async (req, reply) => {
     let selector: GroupSelector;
+    let spec: FilterSpec | null;
     try {
       selector = resolveGroupBy(req.query.groupBy);
+      spec = resolveProjectScope(req.query.project, parseFilterParam(req.query.filter));
     } catch (err) {
       return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
     }
-    const { from, to, product, filter } = req.query;
-    const spec = parseFilterParam(filter);
+    const { from, to, product } = req.query;
     const emailPred = emailPredicate(spec);
     const keyer = filteredKeyer(selector, spec);
     const { rows } = aggregateByKeyerOverTime(
@@ -343,9 +400,16 @@ app.post("/api/projects", async (req, reply) => {
   if (!file) return reply.code(400).send({ error: "No file uploaded (field name: 'file')." });
   const text = (await file.toBuffer()).toString("utf8");
   try {
-    const { index, projectCount, memberCount, warnings } = parseProjectsYaml(text);
-    state.setMemberships(index, projectCount, warnings, `upload: ${file.filename} (${projectCount} project(s))`);
-    return { ok: true, projects: projectCount, members: memberCount, warnings, source: state.projectsSource };
+    const result = parseProjectsYaml(text);
+    state.setProjects(result, `upload: ${file.filename} (${result.projectCount} project(s))`);
+    return {
+      ok: true,
+      projects: result.projectCount,
+      members: result.memberCount,
+      cycles: result.cycleCount,
+      warnings: result.warnings,
+      source: state.projectsSource,
+    };
   } catch (err) {
     return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
   }

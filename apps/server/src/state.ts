@@ -6,7 +6,9 @@ import {
   loadProjectsYaml,
   MetricsDb,
   type AttributeMap,
+  type CycleIndex,
   type MembershipIndex,
+  type ProjectsParseResult,
 } from "@claude-analytics/core";
 
 export interface ServerConfig {
@@ -34,8 +36,10 @@ export class AppState {
   attributes: AttributeMap = new Map();
   csvSource: string | null = null; // describes where the active CSV came from
   memberships: MembershipIndex = new Map();
+  cycles: CycleIndex = new Map();
   projectsSource: string | null = null; // describes where the active projects file came from
   projectCount = 0;
+  cycleCount = 0;
   projectWarnings: string[] = [];
 
   constructor() {
@@ -57,11 +61,8 @@ export class AppState {
   private loadDefaultProjects(): void {
     const { projectsPath } = this.config;
     if (projectsPath && existsSync(projectsPath)) {
-      const { index, projectCount, warnings } = loadProjectsYaml(projectsPath);
-      this.memberships = index;
-      this.projectCount = projectCount;
-      this.projectWarnings = warnings;
-      this.projectsSource = `${projectsPath} (${projectCount} project(s))`;
+      const result = loadProjectsYaml(projectsPath);
+      this.setProjects(result, `${projectsPath} (${result.projectCount} project(s))`);
     }
   }
 
@@ -70,10 +71,12 @@ export class AppState {
     this.csvSource = source;
   }
 
-  setMemberships(index: MembershipIndex, projectCount: number, warnings: string[], source: string): void {
-    this.memberships = index;
-    this.projectCount = projectCount;
-    this.projectWarnings = warnings;
+  setProjects(result: ProjectsParseResult, source: string): void {
+    this.memberships = result.index;
+    this.cycles = result.cycles;
+    this.projectCount = result.projectCount;
+    this.cycleCount = result.cycleCount;
+    this.projectWarnings = result.warnings;
     this.projectsSource = source;
   }
 }

@@ -56,9 +56,9 @@ function makeWrappedTick(maxChars: number, maxLines: number) {
 export function xAxisProps(
   count: number,
   maxLabelLen: number,
-  opts: { rotateWhenShort?: boolean } = {},
+  opts: { rotateWhenShort?: boolean; forceAllTicks?: boolean } = {},
 ): Record<string, unknown> {
-  if (count <= 6) {
+  if (count <= 6 && !opts.forceAllTicks) {
     // Few enough to lay flat; let recharts thin ticks if they collide.
     return { interval: "preserveStartEnd" as const };
   }
@@ -84,3 +84,16 @@ export function xAxisProps(
 export const COLORS = ["#d97757", "#5a6b8c", "#7fae7f", "#b08cc0", "#c0a96b", "#6b9bc0"];
 /** Colour reserved for the "grey" bucket in stacked-by-group charts (e.g. Unassigned, Other). */
 export const NEUTRAL_COLOR = "#5c6270";
+
+// ---- Shared layout for charts that carry a CycleRail annotation strip below
+// them. The rail is a plain CSS grid, not part of the recharts SVG, so it needs
+// the plot's actual left/right gutters (margin + y-axis width) to line up its
+// columns under the right bars. Charts that render a CycleRail should pass
+// these as their <BarChart margin> and <YAxis width>.
+export const CHART_MARGIN = { top: 5, right: 12, bottom: 5, left: 5 };
+export const Y_AXIS_WIDTH = 50;
+/** Left gutter to match with the rail's left padding. */
+export const PLOT_LEFT = Y_AXIS_WIDTH + CHART_MARGIN.left;
+/** Right gutter for a single-axis chart. Charts with a second (right-hand) axis
+ *  should use PLOT_LEFT again instead. */
+export const PLOT_RIGHT = CHART_MARGIN.right;

@@ -1,6 +1,6 @@
 import type { AttributeMap } from "./csv.js";
 import { groupKey } from "./join.js";
-import { membershipKeys, resolveTimelineDimension, timelineDimensionId, type MembershipIndex, type TimelineFacet } from "./projects.js";
+import { distinctFacetValues, membershipKeys, resolveTimelineDimension, timelineDimensionId, type MembershipIndex, type TimelineFacet } from "./projects.js";
 import type { RowKeyer } from "./aggregate.js";
 
 /** Special facet key for filtering on individual member emails (e.g. exclude a heavy user). */
@@ -55,6 +55,39 @@ export function makeEmailFilter(
     }
     return true;
   };
+}
+
+/**
+ * Union two filter specs' hidden values per facet. Hides AND across facets (a
+ * row must clear every facet to be visible), so unioning hidden sets intersects
+ * what's visible — the correct way to combine, say, a member filter with a
+ * separately-applied "scope to this project" constraint into one pass, rather
+ * than wrapping a keyer/weight function twice (which would double-apply any
+ * cross-facet proportional scaling — see applyTimelineFilterToKeyer).
+ */
+export function mergeFilterSpecs(a: FilterSpec | null | undefined, b: FilterSpec | null | undefined): FilterSpec | null {
+  if (isEmptyFilter(a)) return b ?? null;
+  if (isEmptyFilter(b)) return a ?? null;
+  const hidden: Record<string, string[]> = {};
+  for (const spec of [a, b]) {
+    for (const [facet, values] of Object.entries(spec.hidden)) {
+      if (!Array.isArray(values) || values.length === 0) continue;
+      hidden[facet] = [...new Set([...(hidden[facet] ?? []), ...values])];
+    }
+  }
+  return { hidden };
+}
+
+/**
+ * A FilterSpec that hides every project value except `project` (including
+ * UNASSIGNED_KEY, which {@link distinctFacetValues} always includes) — i.e.
+ * "scope the data to this one project". Meant to be combined with the active
+ * member filter via {@link mergeFilterSpecs} before a single call to
+ * {@link applyTimelineFilterToKeyer} or {@link makeRowWeight}.
+ */
+export function projectScopeSpec(index: MembershipIndex, project: string): FilterSpec {
+  const hiddenProjects = distinctFacetValues(index, "project").filter((v) => v !== project);
+  return { hidden: { [timelineDimensionId("project")]: hiddenProjects } };
 }
 
 /** Parse a JSON filter spec from a query param. Returns null when absent or invalid. */

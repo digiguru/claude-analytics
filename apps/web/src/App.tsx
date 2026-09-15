@@ -122,18 +122,23 @@ export function App() {
         ))}
       </div>
 
-      {tab === "overview" && <OverviewView from={from} to={to} filterQuery={filterQuery} onError={setError} />}
+      {tab === "overview" && (
+        <OverviewView from={from} to={to} projectCycles={status?.projectCycles ?? []} filterQuery={filterQuery} onError={setError} />
+      )}
       {tab === "groups" && (
         <GroupsView
           from={from}
           to={to}
           dimensions={status?.dimensions ?? []}
           timelineDimensions={status?.timelineDimensions ?? []}
+          projectCycles={status?.projectCycles ?? []}
           filterQuery={filterQuery}
           onError={setError}
         />
       )}
-      {tab === "members" && <MembersView from={from} to={to} filter={filter} onError={setError} />}
+      {tab === "members" && (
+        <MembersView from={from} to={to} filter={filter} projectCycles={status?.projectCycles ?? []} onError={setError} />
+      )}
     </div>
   );
 }

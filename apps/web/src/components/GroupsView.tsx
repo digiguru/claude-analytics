@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { api, PRODUCTS, tokens, usd, type GroupRow, type GroupsResponse, type TimelineDimension } from "../api.js";
-import { COLORS, NEUTRAL_COLOR, xAxisProps } from "../charts.js";
+import { Bar, BarChart, CartesianGrid, Legend, ReferenceArea, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { api, PRODUCTS, tokens, usd, type GroupRow, type GroupsResponse, type ProjectCycles, type TimelineDimension } from "../api.js";
+import { CHART_MARGIN, COLORS, NEUTRAL_COLOR, Y_AXIS_WIDTH, wrapLabel, xAxisProps } from "../charts.js";
+import { bucketByCycle, snapBand, type ChartBucket } from "../cycles.js";
 import { bucketSeries, type Granularity } from "../series.js";
 import { useUrlParam } from "../url.js";
+import { CycleRail } from "./CycleRail.js";
 import { SortableTable, type Column } from "./SortableTable.js";
 
 /** Chart/table ordering: by metric magnitude ("size", default) or by group name ("alpha"). */
@@ -14,6 +16,7 @@ interface Props {
   to: string;
   dimensions: string[];
   timelineDimensions: TimelineDimension[];
+  projectCycles: ProjectCycles[];
   filterQuery?: string;
   onError: (msg: string | null) => void;
 }
@@ -55,8 +58,9 @@ const GRANULARITIES: { key: Granularity; label: string }[] = [
 
 /** Pivot the daily group×date rows into one row per bucket with a cost column per
  *  key, capping the stack at the top MAX_STACK_KEYS keys (by total cost) plus an
- *  "Other" catch-all. Unassigned always renders, last, regardless of rank. */
-function useStackedSeries(data: GroupsResponse | null, granularity: Granularity) {
+ *  "Other" catch-all. Unassigned always renders, last, regardless of rank. Buckets
+ *  by day/week/month, or — when scoped to one project with cycles — by cycle. */
+function useStackedSeries(data: GroupsResponse | null, bucket: ChartBucket, cycles: ProjectCycles["cycles"]) {
   return useMemo(() => {
     if (!data || data.timeseries.length === 0) return { rows: [] as Record<string, number | string>[], keys: [] as string[] };
 
@@ -67,31 +71,42 @@ function useStackedSeries(data: GroupsResponse | null, granularity: Granularity)
 
     const byDate = new Map<string, Record<string, number | string>>();
     for (const row of data.timeseries) {
-      let bucket = byDate.get(row.date);
-      if (!bucket) byDate.set(row.date, (bucket = { date: row.date }));
+      let acc = byDate.get(row.date);
+      if (!acc) byDate.set(row.date, (acc = { date: row.date }));
       const label = row.key === UNASSIGNED_KEY || top.has(row.key) ? row.key : OTHER_KEY;
-      bucket[label] = (Number(bucket[label]) || 0) + row.costCents / 100;
+      acc[label] = (Number(acc[label]) || 0) + row.costCents / 100;
     }
     const daily = [...byDate.values()].sort((a, b) => String(a.date).localeCompare(String(b.date)));
-    const bucketed = bucketSeries(daily, granularity, {});
+    const bucketed = bucket === "cycle" ? bucketByCycle(daily, cycles) : bucketSeries(daily, bucket, {});
 
     const keys = [...rankedKeys.filter((k) => top.has(k)), ...(hasOther ? [OTHER_KEY] : []), ...(hasUnassigned ? [UNASSIGNED_KEY] : [])];
     return { rows: bucketed, keys };
-  }, [data, granularity]);
+  }, [data, bucket, cycles]);
 }
 
-export function GroupsView({ from, to, dimensions, timelineDimensions, filterQuery, onError }: Props) {
+export function GroupsView({ from, to, dimensions, timelineDimensions, projectCycles, filterQuery, onError }: Props) {
   const [dimension, setDimension] = useUrlParam("groupBy", "");
   const [product, setProduct] = useUrlParam("product", "");
+  const [project, setProject] = useUrlParam("project", "");
   const [metricKey, setMetricKey] = useUrlParam("metric", String(METRICS[0]!.key));
   const [sortOrderRaw, setSortOrder] = useUrlParam("sort", "size");
-  const [granularityRaw, setGranularity] = useUrlParam("granularity", "week");
+  const [bucketRaw, setBucket] = useUrlParam("granularity", "week");
+  const [showCyclesRaw, setShowCycles] = useUrlParam("cycles", "1");
   const [data, setData] = useState<GroupsResponse | null>(null);
   const [loading, setLoading] = useState(false);
 
   const metric = METRICS.find((m) => String(m.key) === metricKey) ?? METRICS[0]!;
   const sortOrder: SortOrder = sortOrderRaw === "alpha" ? "alpha" : "size";
-  const granularity: Granularity = granularityRaw === "day" || granularityRaw === "month" ? granularityRaw : "week";
+  const showCycles = showCyclesRaw !== "0";
+
+  const projectNames = useMemo(
+    () => (timelineDimensions.find((d) => d.id === "@project")?.values ?? []).filter((v) => v !== UNASSIGNED_KEY),
+    [timelineDimensions],
+  );
+  const cyclesForProject = useCallback(
+    (name: string) => projectCycles.find((p) => p.project === name)?.cycles ?? [],
+    [projectCycles],
+  );
 
   // Default Group By once dimensions load (unless a URL/previous pick is still valid):
   // prefer the first timeline facet (Project) when a projects file is loaded, else the
@@ -108,17 +123,29 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, filterQue
     setLoading(true);
     onError(null);
     try {
-      setData(await api.groups(dimension, from || undefined, to || undefined, product || undefined, filterQuery));
+      setData(
+        await api.groups(dimension, from || undefined, to || undefined, product || undefined, filterQuery, project || undefined),
+      );
     } catch (e) {
       onError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, [dimension, product, from, to, filterQuery, onError]);
+  }, [dimension, product, project, from, to, filterQuery, onError]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  // The project this chart is effectively scoped to: the explicit picker, else
+  // (when it settles to exactly one) the active member filter. Drives Cycle
+  // granularity + annotation; never auto-selects Cycle, only offers it.
+  const scopeProject = project || (data?.activeProjects.length === 1 ? data.activeProjects[0]! : null);
+  const scopeIsInferred = !project && Boolean(scopeProject);
+  const scopeCycles = scopeProject ? cyclesForProject(scopeProject) : [];
+  const cycleAvailable = scopeCycles.length > 0;
+
+  const bucket: ChartBucket = bucketRaw === "cycle" && cycleAvailable ? "cycle" : bucketRaw === "day" || bucketRaw === "month" ? bucketRaw : "week";
 
   // Order groups for the chart (and the table's default) by the selected metric or by name.
   const orderedGroups = useMemo(() => {
@@ -132,7 +159,7 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, filterQue
   }, [data, sortOrder, metric.key]);
 
   const chartData = orderedGroups.map((g) => ({ name: g.key, value: Number(g[metric.key]) }));
-  const stacked = useStackedSeries(data, granularity);
+  const stacked = useStackedSeries(data, bucket, scopeCycles);
   const stackColor = useMemo(() => {
     const colorByKey = new Map<string, string>();
     let i = 0;
@@ -145,6 +172,17 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, filterQue
   }, [stacked.keys]);
 
   const isTimelineDimension = dimension.startsWith("@");
+
+  // Cycle annotation (bands or a ribbon), gated off entirely when the bars
+  // themselves already are cycles, or the "Cycles" toggle is off.
+  const chartLabels = stacked.rows.map((r) => String(r.date));
+  const annotateBands = showCycles && bucket !== "cycle" && scopeProject !== null && cycleAvailable;
+  const railProjects = useMemo(() => {
+    if (!showCycles || bucket === "cycle") return [];
+    if (scopeProject) return []; // single project scoped -> bands instead, not a redundant one-row rail
+    const active = new Set(data?.activeProjects ?? []);
+    return projectCycles.filter((p) => active.has(p.project) || active.size === 0);
+  }, [showCycles, bucket, scopeProject, data, projectCycles]);
 
   return (
     <div className="panel">
@@ -171,6 +209,17 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, filterQue
             )}
           </select>
         </div>
+        {projectNames.length > 0 && (
+          <div>
+            <label>Project</label>
+            <select value={project} onChange={(e) => setProject(e.target.value)}>
+              <option value="">All projects</option>
+              {projectNames.map((p) => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
+          </div>
+        )}
         <div>
           <label>Product (cost/tokens)</label>
           <select value={product} onChange={(e) => setProduct(e.target.value)}>
@@ -195,15 +244,22 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, filterQue
             <option value="alpha">Name (A–Z)</option>
           </select>
         </div>
-        <a href={api.exportUrl(dimension, from || undefined, to || undefined, product || undefined, filterQuery)}>
+        <a href={api.exportUrl(dimension, from || undefined, to || undefined, product || undefined, filterQuery, project || undefined)}>
           <button className="secondary" type="button">Export CSV</button>
         </a>
-        <a href={api.exportGroupsDailyUrl(dimension, from || undefined, to || undefined, product || undefined, filterQuery)}>
+        <a href={api.exportGroupsDailyUrl(dimension, from || undefined, to || undefined, product || undefined, filterQuery, project || undefined)}>
           <button className="secondary" type="button">Export daily CSV</button>
         </a>
       </div>
 
       {loading && <p className="muted">Loading…</p>}
+
+      {scopeIsInferred && scopeProject && (
+        <p className="muted" style={{ marginTop: -8, marginBottom: 12 }}>
+          <span className="pill">Scoped to {scopeProject}</span>
+          (via the active member filter — the totals above already reflect it)
+        </p>
+      )}
 
       {data && stacked.rows.length > 0 && (
         <div style={{ marginBottom: 20 }}>
@@ -214,25 +270,57 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, filterQue
                 <button
                   key={g.key}
                   type="button"
-                  className={granularity === g.key ? "active" : ""}
-                  onClick={() => setGranularity(g.key)}
+                  className={bucket === g.key ? "active" : ""}
+                  onClick={() => setBucket(g.key)}
                 >
                   {g.label}
                 </button>
               ))}
+              {cycleAvailable && (
+                <button type="button" className={bucket === "cycle" ? "active" : ""} onClick={() => setBucket("cycle")}>
+                  Cycle
+                </button>
+              )}
             </div>
+            {(cycleAvailable || railProjects.length > 0) && (
+              <button className="secondary" type="button" onClick={() => setShowCycles(showCycles ? "0" : "1")}>
+                {showCycles ? "Hide cycles" : "Show cycles"}
+              </button>
+            )}
           </div>
           <div style={{ height: 280 }}>
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={stacked.rows}>
+              <BarChart data={stacked.rows} margin={CHART_MARGIN}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#2a2f3a" />
+                {annotateBands &&
+                  scopeCycles.map((c, i) => {
+                    const span = snapBand(c, chartLabels, bucket);
+                    if (!span) return null;
+                    const x1Idx = chartLabels.indexOf(span.x1);
+                    const x2Idx = chartLabels.indexOf(span.x2);
+                    const wide = x2Idx - x1Idx >= 1;
+                    return (
+                      <ReferenceArea
+                        key={c.name}
+                        x1={span.x1}
+                        x2={span.x2}
+                        isFront={false}
+                        fill="#ffffff"
+                        fillOpacity={i % 2 ? 0.07 : 0.04}
+                        stroke="#2a2f3a"
+                        strokeDasharray="3 3"
+                        label={wide ? { value: wrapLabel(c.name, 18, 1)[0], position: "insideTopLeft", fill: "#9aa3b2", fontSize: 11 } : undefined}
+                      />
+                    );
+                  })}
                 <XAxis
                   dataKey="date"
                   stroke="#9aa3b2"
                   fontSize={11}
-                  {...xAxisProps(stacked.rows.length, 10, { rotateWhenShort: true })}
+                  tickFormatter={bucket === "cycle" ? (v: string) => v : undefined}
+                  {...xAxisProps(stacked.rows.length, 10, { rotateWhenShort: bucket !== "cycle", forceAllTicks: bucket === "cycle" })}
                 />
-                <YAxis stroke="#9aa3b2" fontSize={12} />
+                <YAxis stroke="#9aa3b2" fontSize={12} width={Y_AXIS_WIDTH} />
                 <Tooltip
                   contentStyle={{ background: "#1a1d24", border: "1px solid #2a2f3a" }}
                   formatter={(v: number) => usd(v * 100)}
@@ -244,6 +332,14 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, filterQue
               </BarChart>
             </ResponsiveContainer>
           </div>
+          {showCycles && bucket !== "cycle" && railProjects.length > 0 && (
+            <CycleRail
+              labels={chartLabels}
+              projects={railProjects.map((p) => ({ project: p.project, cycles: p.cycles }))}
+              granularity={bucket}
+              moreCount={Math.max(0, projectCycles.length - railProjects.length)}
+            />
+          )}
         </div>
       )}
 
@@ -281,7 +377,7 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, filterQue
         <p className="muted">No cached data for this range. Sync first.</p>
       )}
 
-      {data && !isTimelineDimension && data.unmatchedCount > 0 && (
+      {data && !isTimelineDimension && !project && data.unmatchedCount > 0 && (
         <p className="muted" style={{ marginTop: 12 }}>
           {data.unmatchedCount} developer(s) in analytics have no CSV match (grouped as “(unmatched)”). Upload a CSV
           whose <code>email</code> column matches your org's emails to break these out.

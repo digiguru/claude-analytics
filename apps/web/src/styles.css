@@ -435,3 +435,50 @@ button.link {
   padding-top: 8px;
   padding-bottom: 8px;
 }
+
+/* ---- cycle annotation: the per-project lane strip below a time chart ---- */
+
+.cycle-rail {
+  margin-top: 4px;
+}
+
+.cycle-rail-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.cycle-rail-label {
+  flex: 0 0 120px;
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cycle-rail-track {
+  flex: 1;
+  display: grid;
+  gap: 2px;
+  padding-left: 50px; /* match charts.tsx PLOT_LEFT (Y_AXIS_WIDTH + margin.left) */
+  padding-right: 12px; /* match charts.tsx PLOT_RIGHT (margin.right) */
+}
+
+.cycle-chip {
+  display: block;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 500;
+  color: #11141a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.85;
+}
+
+.cycle-rail-more {
+  margin: 4px 0 0;
+}

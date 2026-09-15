@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Bar, CartesianGrid, Legend, Line, ComposedChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { api, tokens, usd, type Attributes, type MemberDay, type MemberSummary, type UserListEntry } from "../api.js";
-import { xAxisProps } from "../charts.js";
+import { Bar, CartesianGrid, Legend, Line, ComposedChart, ReferenceArea, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { api, tokens, usd, type Attributes, type MemberDay, type MemberSummary, type ProjectCycles, type UserListEntry } from "../api.js";
+import { CHART_MARGIN, Y_AXIS_WIDTH, wrapLabel, xAxisProps } from "../charts.js";
+import { snapBand } from "../cycles.js";
 import { prepareSeries, type Granularity } from "../series.js";
+import { CycleRail } from "./CycleRail.js";
 import { SeriesControls } from "./SeriesControls.js";
 import { useUrlParam } from "../url.js";
 import { filterToQuery, userPasses, type FilterSpec } from "../filters.js";
@@ -30,10 +32,11 @@ interface Props {
   from: string;
   to: string;
   filter: FilterSpec;
+  projectCycles: ProjectCycles[];
   onError: (msg: string | null) => void;
 }
 
-export function MembersView({ from, to, filter, onError }: Props) {
+export function MembersView({ from, to, filter, projectCycles, onError }: Props) {
   const [users, setUsers] = useState<UserListEntry[]>([]);
   const [search, setSearch] = useState("");
   const [selectedRaw, setSelected] = useUrlParam("member", "");
@@ -78,6 +81,11 @@ export function MembersView({ from, to, filter, onError }: Props) {
     trendKey: "cost",
     aggs: { cost: "sum", chat: "sum", cc: "sum" },
   });
+  // This person's project(s) in range, with cycle definitions — bands when they
+  // were on exactly one, else a lane per project (mirrors the Groups page).
+  const memberProjectCycles = projectCycles.filter((p) => detail?.projects.includes(p.project));
+  const singleProjectCycles = memberProjectCycles.length === 1 ? memberProjectCycles[0]!.cycles : [];
+  const chartLabels = chartData.map((r) => String(r.date));
 
   return (
     <div className="panel">
@@ -165,11 +173,30 @@ export function MembersView({ from, to, filter, onError }: Props) {
                   </div>
                   <div style={{ height: 260, margin: "12px 0" }}>
                     <ResponsiveContainer width="100%" height="100%">
-                      <ComposedChart data={chartData}>
+                      <ComposedChart data={chartData} margin={CHART_MARGIN}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#2a2f3a" />
+                        {singleProjectCycles.map((c, i) => {
+                          const span = snapBand(c, chartLabels, granularity);
+                          if (!span) return null;
+                          const wide = chartLabels.indexOf(span.x2) - chartLabels.indexOf(span.x1) >= 1;
+                          return (
+                            <ReferenceArea
+                              key={c.name}
+                              yAxisId="l"
+                              x1={span.x1}
+                              x2={span.x2}
+                              isFront={false}
+                              fill="#ffffff"
+                              fillOpacity={i % 2 ? 0.07 : 0.04}
+                              stroke="#2a2f3a"
+                              strokeDasharray="3 3"
+                              label={wide ? { value: wrapLabel(c.name, 18, 1)[0], position: "insideTopLeft", fill: "#9aa3b2", fontSize: 11 } : undefined}
+                            />
+                          );
+                        })}
                         <XAxis dataKey="date" stroke="#9aa3b2" fontSize={11} {...xAxisProps(chartData.length, 10, { rotateWhenShort: true })} />
-                        <YAxis yAxisId="l" stroke="#d97757" fontSize={11} />
-                        <YAxis yAxisId="r" orientation="right" stroke="#5a6b8c" fontSize={11} />
+                        <YAxis yAxisId="l" stroke="#d97757" fontSize={11} width={Y_AXIS_WIDTH} />
+                        <YAxis yAxisId="r" orientation="right" stroke="#5a6b8c" fontSize={11} width={Y_AXIS_WIDTH} />
                         <Tooltip contentStyle={{ background: "#1a1d24", border: "1px solid #2a2f3a" }} formatter={(v: number, n) => (typeof n === "string" && n.startsWith("cost") ? `$${Number(v).toFixed(2)}` : v)} />
                         <Legend />
                         <Bar yAxisId="l" dataKey="cost" name="cost ($)" fill="#d97757" />
@@ -180,6 +207,9 @@ export function MembersView({ from, to, filter, onError }: Props) {
                       </ComposedChart>
                     </ResponsiveContainer>
                   </div>
+                  {memberProjectCycles.length > 1 && (
+                    <CycleRail labels={chartLabels} projects={memberProjectCycles} granularity={granularity} dualAxis />
+                  )}
                 </>
               )}
 

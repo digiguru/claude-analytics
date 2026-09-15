@@ -125,6 +125,49 @@ cost from every other view, not the whole person.
 `config/projects.yaml` is git-ignored, like `export.csv` — only the sample
 ships in the repo.
 
+### Cycles (milestones within a project)
+
+Each project can also declare its own `cycles` — named periods like sprints or
+delivery phases, timed however that team runs them:
+
+```yaml
+projects:
+  - name: "Flow Team #1 - Chatbot"
+    team: Flow
+    cycles:
+      - name: Discovery
+        start: 2026-03-25       # end omitted -> runs to the day before the next cycle
+      - name: Build
+        start: 2026-04-14
+        end: 2026-05-17         # explicit inclusive end
+      - name: Harden
+        start: 2026-05-18       # last cycle, no end -> open-ended
+    members:
+      - email: someone@yourorg.com
+        start: 2026-03-25
+```
+
+Cycles never overlap: an omitted `end` runs up to (but not including) the next
+cycle's `start`, and the final cycle's omitted `end` stays open-ended. Days
+inside a project but outside every declared cycle show up as their own
+**"(no cycle)"** bar, so the numbers always add up to the project's real total.
+
+Where cycles show up:
+
+- **Groups & products** — pick a single **Project** (the new dropdown next to
+  Group by, or by filtering the member picker down to one project) and a
+  **Cycle** option appears on the cost-over-time chart's Day/Week/Month
+  control, so each bar is one cycle instead of a fixed period.
+- **All three tabs** (Groups, Overview, Members) annotate their time charts with
+  each project's cycles — a labelled band when exactly one project is in view,
+  or a labelled lane per project when several are. A "Show/Hide cycles" toggle
+  turns this off.
+
+Run `npm run cli -- projects` any time to validate a projects file — it lists
+every project's cycles with their resolved date ranges and flags anything that
+looks off (duplicate names, overlapping windows, a cycle outside anyone's
+assignment, and so on).
+
 ## CLI
 
 The CLI is an alternative to the web app that hits the same cache. Run `npm run cli -- columns` any time to list the dimensions available in your CSV.

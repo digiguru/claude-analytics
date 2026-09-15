@@ -62,6 +62,13 @@ export function nextDay(date: string): string {
   return d.toISOString().slice(0, 10);
 }
 
+/** Previous calendar day as YYYY-MM-DD (e.g. a cycle's derived end date). */
+export function prevDay(date: string): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
 /** RFC 3339 start-of-day / next-day (for [starting_at, ending_at) ranges). */
 export function dayStart(date: string): string {
   return `${date}T00:00:00Z`;

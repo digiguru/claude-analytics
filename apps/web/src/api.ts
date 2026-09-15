@@ -11,6 +11,17 @@ export interface TimelineDimension {
   values: string[];
 }
 
+/** One named period within a project's timeline (e.g. a delivery cycle/sprint). */
+export interface CycleDef {
+  name: string;
+  start: string; // inclusive, YYYY-MM-DD
+  end: string | null; // inclusive; null = open-ended (the final cycle only)
+}
+export interface ProjectCycles {
+  project: string;
+  cycles: CycleDef[];
+}
+
 export interface Status {
   csvLoaded: boolean;
   csvSource: string | null;
@@ -21,6 +32,9 @@ export interface Status {
   projectCount: number;
   projectWarnings: string[];
   timelineDimensions: TimelineDimension[];
+  /** Static cycle definitions for every project that declared any. */
+  projectCycles: ProjectCycles[];
+  cycleCount: number;
   cachedDateRange: { min: string; max: string } | null;
   developerCount: number;
   apiKeyConfigured: boolean;
@@ -91,6 +105,9 @@ export interface GroupsResponse {
   timeseries: GroupDayRow[];
   /** Every key that appears in `groups`/`timeseries`, ordered by total cost descending. */
   keys: string[];
+  /** Projects with non-zero cost under the current scope/filter, cost-desc, no Unassigned.
+   *  Drives the Cycle granularity/annotation auto-unlock when it settles to one. */
+  activeProjects: string[];
   unmatchedCount: number;
 }
 
@@ -114,6 +131,8 @@ export interface MemberDay {
 export interface MemberSummary {
   email: string;
   attributes: Attributes | null;
+  /** Project(s) this person overlapped with in range (empty if none/no projects file). */
+  projects: string[];
   activeDays: number;
   totalCostCents: number;
   totalTokens: number;
@@ -171,8 +190,8 @@ export const api = {
     }).then(json<{ ok: boolean; summaryDays: number; activityDays: number; userProductRows: number; orgProductRows: number }>),
   overview: (from?: string, to?: string, filter?: string) =>
     fetch(`/api/overview${qs({ from, to, filter })}`).then(json<Overview>),
-  groups: (dimension: Dimension, from?: string, to?: string, product?: string, filter?: string) =>
-    fetch(`/api/groups${qs({ groupBy: dimension, from, to, product, filter })}`).then(json<GroupsResponse>),
+  groups: (dimension: Dimension, from?: string, to?: string, product?: string, filter?: string, project?: string) =>
+    fetch(`/api/groups${qs({ groupBy: dimension, from, to, product, filter, project })}`).then(json<GroupsResponse>),
   users: (from?: string, to?: string) => fetch(`/api/users${qs({ from, to })}`).then(json<{ users: UserListEntry[] }>),
   member: (email: string, from?: string, to?: string) =>
     fetch(`/api/members/${encodeURIComponent(email)}${qs({ from, to })}`).then(json<MemberSummary>),
@@ -185,13 +204,13 @@ export const api = {
     const form = new FormData();
     form.append("file", file);
     return fetch("/api/projects", { method: "POST", body: form }).then(
-      json<{ ok: boolean; projects: number; members: number; warnings: string[]; source: string }>,
+      json<{ ok: boolean; projects: number; members: number; cycles: number; warnings: string[]; source: string }>,
     );
   },
-  exportUrl: (dimension: Dimension, from?: string, to?: string, product?: string, filter?: string) =>
-    `/api/export${qs({ groupBy: dimension, from, to, product, filter })}`,
-  exportGroupsDailyUrl: (dimension: Dimension, from?: string, to?: string, product?: string, filter?: string) =>
-    `/api/export/groups-daily${qs({ groupBy: dimension, from, to, product, filter })}`,
+  exportUrl: (dimension: Dimension, from?: string, to?: string, product?: string, filter?: string, project?: string) =>
+    `/api/export${qs({ groupBy: dimension, from, to, product, filter, project })}`,
+  exportGroupsDailyUrl: (dimension: Dimension, from?: string, to?: string, product?: string, filter?: string, project?: string) =>
+    `/api/export/groups-daily${qs({ groupBy: dimension, from, to, product, filter, project })}`,
   exportMembersUrl: (from?: string, to?: string, filter?: string) =>
     `/api/export/members${qs({ from, to, filter })}`,
   exportMembersLongUrl: (from?: string, to?: string, filter?: string) =>

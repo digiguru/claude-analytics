@@ -1,5 +1,6 @@
 import { parse as parseYaml } from "yaml";
 import { readFileSync } from "node:fs";
+import { prevDay } from "./map.js";
 
 // ============================================================================
 // Temporal project/team/client groupings — a hand-editable YAML file that
@@ -51,10 +52,30 @@ export interface Membership {
 /** email (lowercased, trimmed) -> memberships, sorted by start date. */
 export type MembershipIndex = Map<string, Membership[]>;
 
+/** Group key for time inside a project but outside every defined cycle. Distinct
+ *  from UNASSIGNED_KEY: "Unassigned" means no project at all; "(no cycle)" means
+ *  this project, un-cycled time. */
+export const NO_CYCLE_KEY = "(no cycle)";
+
+/** One named period within a project's timeline (e.g. a delivery cycle/sprint). */
+export interface Cycle {
+  project: string;
+  name: string; // display label, de-duplicated within the project
+  start: string; // inclusive, YYYY-MM-DD
+  end: string | null; // inclusive; null only for the final (open-ended) cycle
+  /** true when `end` was derived from the next cycle's start rather than stated explicitly. */
+  derivedEnd: boolean;
+}
+
+/** Exact project name (as Membership.project emits it) -> cycles, sorted by start. */
+export type CycleIndex = Map<string, Cycle[]>;
+
 export interface ProjectsParseResult {
   index: MembershipIndex;
+  cycles: CycleIndex;
   projectCount: number;
   memberCount: number;
+  cycleCount: number;
   warnings: string[];
 }
 
@@ -65,11 +86,17 @@ interface RawMember {
   end?: unknown;
   allocation?: unknown;
 }
+interface RawCycle {
+  name?: unknown;
+  start?: unknown;
+  end?: unknown;
+}
 interface RawProject {
   name?: unknown;
   team?: unknown;
   client?: unknown;
   members?: unknown;
+  cycles?: unknown;
 }
 interface RawFile {
   projects?: unknown;
@@ -96,9 +123,11 @@ export function parseProjectsYaml(text: string): ProjectsParseResult {
 
   const warnings: string[] = [];
   const index: MembershipIndex = new Map();
+  const cycles: CycleIndex = new Map();
   const seenNames = new Set<string>();
   let projectCount = 0;
   let memberCount = 0;
+  let cycleCount = 0;
 
   (doc.projects as RawProject[]).forEach((raw, projectIdx) => {
     if (typeof raw !== "object" || raw === null) {
@@ -121,6 +150,7 @@ export function parseProjectsYaml(text: string): ProjectsParseResult {
     const team = typeof raw.team === "string" && raw.team.trim() ? raw.team.trim() : NONE_KEY;
     const client = typeof raw.client === "string" && raw.client.trim() ? raw.client.trim() : NONE_KEY;
     const members = Array.isArray(raw.members) ? (raw.members as RawMember[]) : [];
+    const projectMemberships: Membership[] = [];
 
     members.forEach((m, memberIdx) => {
       const who = `Project "${name}", member #${memberIdx + 1}`;
@@ -169,8 +199,118 @@ export function parseProjectsYaml(text: string): ProjectsParseResult {
       let list = index.get(email);
       if (!list) index.set(email, (list = []));
       list.push(membership);
+      projectMemberships.push(membership);
       memberCount += 1;
     });
+
+    // --- cycles: named periods within this project's timeline ---
+    const rawCycles = Array.isArray(raw.cycles) ? (raw.cycles as RawCycle[]) : [];
+    if (rawCycles.length > 0) {
+      if (projectMemberships.length === 0) {
+        warnings.push(`Project "${name}": has cycles but no valid members — dates can't be checked against any assignment.`);
+      }
+
+      type ParsedCycle = { name: string; start: string; end: string | null };
+      const parsed: ParsedCycle[] = [];
+      const seenCycleNames = new Map<string, number>(); // lowercased name -> count so far
+
+      rawCycles.forEach((c, cycleIdx) => {
+        const who = `Project "${name}", cycle #${cycleIdx + 1}`;
+        if (typeof c !== "object" || c === null) {
+          warnings.push(`${who}: not an object — skipped.`);
+          return;
+        }
+        let cname = typeof c.name === "string" ? c.name.trim() : "";
+        if (!cname) {
+          warnings.push(`${who}: missing "name" — skipped.`);
+          return;
+        }
+        const cstart = typeof c.start === "string" ? c.start.trim() : "";
+        if (!DATE_RE.test(cstart)) {
+          warnings.push(`${who} (${cname}): missing/invalid "start" date (want YYYY-MM-DD) — skipped.`);
+          return;
+        }
+        let cend: string | null = null;
+        if (!isBlank(c.end)) {
+          const endStr = String(c.end).trim();
+          if (!DATE_RE.test(endStr)) {
+            warnings.push(`${who} (${cname}): invalid "end" date "${endStr}" — treated as open-ended.`);
+          } else {
+            cend = endStr;
+          }
+        }
+        if (cend !== null && cend < cstart) {
+          warnings.push(`${who} (${cname}): "end" (${cend}) is before "start" (${cstart}) — skipped.`);
+          return;
+        }
+
+        const lower = cname.toLowerCase();
+        const seenCount = (seenCycleNames.get(lower) ?? 0) + 1;
+        seenCycleNames.set(lower, seenCount);
+        if (seenCount > 1) {
+          const deduped = `${cname} (${seenCount})`;
+          warnings.push(`Project "${name}": duplicate cycle name "${cname}" — using "${deduped}" for this later one.`);
+          cname = deduped;
+        }
+
+        parsed.push({ name: cname, start: cstart, end: cend });
+      });
+
+      // Sort chronologically; Array#sort is stable, so equal-start cycles keep
+      // their declaration order rather than being reordered arbitrarily.
+      parsed.sort((a, b) => a.start.localeCompare(b.start));
+
+      for (let i = 1; i < parsed.length; i++) {
+        if (parsed[i]!.start === parsed[i - 1]!.start) {
+          warnings.push(
+            `Project "${name}": cycles "${parsed[i - 1]!.name}" and "${parsed[i]!.name}" share the same start date (${parsed[i]!.start}) — ordering follows declaration order.`,
+          );
+        }
+      }
+
+      // Resolve ends so cycles never overlap: an omitted end runs up to (but not
+      // including) the next cycle's start; an explicit end that reaches into the
+      // next cycle is clamped the same way. The final cycle's omitted end stays
+      // null (open-ended) — resolved against the chart's last rendered bucket at
+      // display time, never against "today", so parsing stays clock-free.
+      const resolved: Cycle[] = [];
+      for (let i = 0; i < parsed.length; i++) {
+        const c = parsed[i]!;
+        const next = parsed[i + 1];
+        let end = c.end;
+        let derivedEnd = false;
+        if (next) {
+          const cappedEnd = prevDay(next.start);
+          if (end === null) {
+            end = cappedEnd;
+            derivedEnd = true;
+          } else if (end >= next.start) {
+            warnings.push(
+              `Project "${name}": cycle "${c.name}" (ends ${end}) overlaps the next cycle "${next.name}" (starts ${next.start}) — truncated to ${cappedEnd}.`,
+            );
+            end = cappedEnd;
+          }
+        }
+        resolved.push({ project: name, name: c.name, start: c.start, end, derivedEnd });
+      }
+
+      if (projectMemberships.length > 0) {
+        const spanStart = projectMemberships.reduce((s, m) => (m.start < s ? m.start : s), projectMemberships[0]!.start);
+        const spanEndOpen = projectMemberships.some((m) => m.end === null);
+        const spanEnd = spanEndOpen ? null : projectMemberships.reduce((s, m) => (m.end! > (s ?? "") ? m.end! : s), projectMemberships[0]!.end);
+        for (const c of resolved) {
+          const overlapsSpan = c.start <= (spanEnd ?? "9999-99-99") && spanStart <= (c.end ?? "9999-99-99");
+          if (!overlapsSpan) {
+            warnings.push(`Project "${name}": cycle "${c.name}" (${c.start} – ${c.end ?? "ongoing"}) falls outside every member assignment — will show no cost.`);
+          }
+        }
+      }
+
+      if (resolved.length > 0) {
+        cycles.set(name, resolved);
+        cycleCount += resolved.length;
+      }
+    }
   });
 
   for (const list of index.values()) list.sort((a, b) => a.start.localeCompare(b.start));
@@ -192,11 +332,27 @@ export function parseProjectsYaml(text: string): ProjectsParseResult {
     }
   }
 
-  return { index, projectCount, memberCount, warnings };
+  return { index, cycles, projectCount, memberCount, cycleCount, warnings };
 }
 
 export function loadProjectsYaml(path: string): ProjectsParseResult {
   return parseProjectsYaml(readFileSync(path, "utf8"));
+}
+
+/** A project's cycles, chronological (empty if it declared none). */
+export function cyclesFor(cycles: CycleIndex, project: string): Cycle[] {
+  return cycles.get(project) ?? [];
+}
+
+/** The cycle active for a project on a given day, or null (before the first
+ *  cycle, or the project declared no cycles at all). */
+export function cycleFor(cycles: CycleIndex, project: string, date: string): Cycle | null {
+  const list = cycles.get(project);
+  if (!list) return null;
+  for (const c of list) {
+    if (c.start <= date && (c.end === null || date <= c.end)) return c;
+  }
+  return null;
 }
 
 /**
