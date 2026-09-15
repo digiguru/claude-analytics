@@ -84,7 +84,11 @@ function resolveGroupBy(value: unknown): GroupSelector {
  * consistent about what "in scope" means.
  */
 function resolveDimensionKeyer(value: unknown, activeProjects: string[]): GroupSelector {
-  if (String(value ?? "").trim().toLowerCase() === CYCLE_DIMENSION_ID) {
+  if (
+    String(value ?? "")
+      .trim()
+      .toLowerCase() === CYCLE_DIMENSION_ID
+  ) {
     if (activeProjects.length !== 1) {
       throw new Error(
         activeProjects.length === 0
@@ -100,7 +104,11 @@ function resolveDimensionKeyer(value: unknown, activeProjects: string[]): GroupS
 /** Projects with non-zero cost under the current scope/filter (cost-desc, no
  *  Unassigned) — drives both the web UI's Cycle-granularity auto-unlock and
  *  whether "Stacking by: Cycle" can be resolved (see resolveDimensionKeyer). */
-function activeProjectsFor(userProducts: ReturnType<typeof state.db.getUserProducts>, product: string | undefined, spec: FilterSpec | null): string[] {
+function activeProjectsFor(
+  userProducts: ReturnType<typeof state.db.getUserProducts>,
+  product: string | undefined,
+  spec: FilterSpec | null,
+): string[] {
   if (state.memberships.size === 0) return [];
   return aggregateByKeyerOverTime(
     userProducts,
@@ -344,7 +352,7 @@ app.get<{
   // applyTimelineFilterToKeyer's same-facet-as-groupBy logic still sees each
   // keyer's own bare keys rather than a combined "primary<sep>secondary" string.
   let secondaryDimension: string | null = null;
-  let secondaryGroups: (GroupRowWithPrimary)[] = [];
+  let secondaryGroups: GroupRowWithPrimary[] = [];
   if (secondarySelector) {
     const secondaryKeyer = filteredKeyer(secondarySelector, q.spec);
     const nested = aggregateByKeyer(q.userProducts, userDays, combineKeyers(keyer, secondaryKeyer), q.product);
@@ -407,15 +415,25 @@ app.get<{ Params: { email: string }; Querystring: RangeQuery }>("/api/members/:e
   // project). Same "overlap" approximation as /api/users; not used for money.
   const range = state.db.dateRange();
   const projects = state.memberships.size
-    ? activeFacetKeysInRange(state.memberships, email, from ?? range?.min ?? "0000-01-01", to ?? range?.max ?? "9999-12-31", "project").filter(
-        (p) => p !== UNASSIGNED_KEY,
-      )
+    ? activeFacetKeysInRange(
+        state.memberships,
+        email,
+        from ?? range?.min ?? "0000-01-01",
+        to ?? range?.max ?? "9999-12-31",
+        "project",
+      ).filter((p) => p !== UNASSIGNED_KEY)
     : [];
   return { ...summary, projects };
 });
 
 app.get<{
-  Querystring: RangeQuery & { groupBy?: string; product?: string; filter?: string; scope?: string; scopeDimension?: string };
+  Querystring: RangeQuery & {
+    groupBy?: string;
+    product?: string;
+    filter?: string;
+    scope?: string;
+    scopeDimension?: string;
+  };
 }>("/api/export", async (req, reply) => {
   let q: ResolvedGroupQuery;
   try {
@@ -433,7 +451,13 @@ app.get<{
 });
 
 app.get<{
-  Querystring: RangeQuery & { groupBy?: string; product?: string; filter?: string; scope?: string; scopeDimension?: string };
+  Querystring: RangeQuery & {
+    groupBy?: string;
+    product?: string;
+    filter?: string;
+    scope?: string;
+    scopeDimension?: string;
+  };
 }>("/api/export/groups-daily", async (req, reply) => {
   let q: ResolvedGroupQuery;
   try {
@@ -449,31 +473,25 @@ app.get<{
     .send(groupsDailyToCsv(rows, q.selector.id));
 });
 
-app.get<{ Querystring: RangeQuery & { filter?: string } }>(
-  "/api/export/members",
-  async (req, reply) => {
-    // Population is everyone Claude knows about (analytics emails); CSV attributes
-    // are joined where they match and left blank where they don't.
-    const { userProducts, emails } = resolveMemberRows(req.query);
-    const { rows, dates } = membersDailyCost(userProducts, state.attributes, emails);
-    return reply
-      .header("Content-Type", "text/csv")
-      .header("Content-Disposition", `attachment; filename="members.csv"`)
-      .send(membersDailyToCsv(rows, dates, dimensionsOf(state.attributes)));
-  },
-);
+app.get<{ Querystring: RangeQuery & { filter?: string } }>("/api/export/members", async (req, reply) => {
+  // Population is everyone Claude knows about (analytics emails); CSV attributes
+  // are joined where they match and left blank where they don't.
+  const { userProducts, emails } = resolveMemberRows(req.query);
+  const { rows, dates } = membersDailyCost(userProducts, state.attributes, emails);
+  return reply
+    .header("Content-Type", "text/csv")
+    .header("Content-Disposition", `attachment; filename="members.csv"`)
+    .send(membersDailyToCsv(rows, dates, dimensionsOf(state.attributes)));
+});
 
-app.get<{ Querystring: RangeQuery & { filter?: string } }>(
-  "/api/export/members-long",
-  async (req, reply) => {
-    const { userProducts, emails } = resolveMemberRows(req.query);
-    const { rows, dates } = membersDailyCost(userProducts, state.attributes, emails);
-    return reply
-      .header("Content-Type", "text/csv")
-      .header("Content-Disposition", `attachment; filename="members-daily.csv"`)
-      .send(membersDailyLongToCsv(rows, dates));
-  },
-);
+app.get<{ Querystring: RangeQuery & { filter?: string } }>("/api/export/members-long", async (req, reply) => {
+  const { userProducts, emails } = resolveMemberRows(req.query);
+  const { rows, dates } = membersDailyCost(userProducts, state.attributes, emails);
+  return reply
+    .header("Content-Type", "text/csv")
+    .header("Content-Disposition", `attachment; filename="members-daily.csv"`)
+    .send(membersDailyLongToCsv(rows, dates));
+});
 
 app.post("/api/csv", async (req, reply) => {
   const file = await req.file();

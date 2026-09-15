@@ -93,7 +93,6 @@ function loadProjectsOptional(override?: string): MembershipIndex {
   }
 }
 
-
 /** Resolve --group-by against the shared core resolution order (timeline
  *  facets, then @member, then CSV columns — see core's resolveGroupBy), or
  *  print an error and exit. Per #28: this used to be an independently
@@ -104,7 +103,9 @@ function resolveGroupBy(attributes: AttributeMap, memberships: MembershipIndex, 
   const result = coreResolveGroupBy(attributes, memberships, value);
   if (result.ok) return result.selector;
   if (result.available.length === 0) {
-    console.error("No CSV attributes or projects file loaded. Pass --csv/--projects or set CSV_PATH/PROJECTS_PATH in .env.");
+    console.error(
+      "No CSV attributes or projects file loaded. Pass --csv/--projects or set CSV_PATH/PROJECTS_PATH in .env.",
+    );
   } else {
     console.error(`Invalid --group-by "${result.invalidValue}". Available: ${result.available.join(", ")}.`);
   }
@@ -153,7 +154,9 @@ program
       }
       console.log(`\nTotal cost: ${usd(ov.totalCostCents)} · total tokens: ${tk(ov.totalTokens)}\n`);
       console.log("Cost by product:");
-      console.table(ov.productTotals.map((p) => ({ product: p.product, cost: usd(p.costCents), tokens: tk(p.totalTokens) })));
+      console.table(
+        ov.productTotals.map((p) => ({ product: p.product, cost: usd(p.costCents), tokens: tk(p.totalTokens) })),
+      );
       console.log("\nHeaviest days (by cost):");
       console.table(ov.heaviestDays.slice(0, 5).map((d) => ({ date: formatDay(d.date), cost: usd(d.costCents) })));
 
@@ -163,7 +166,12 @@ program
       });
       console.log("\nTop 5 users (by cost):");
       console.table(
-        top.map((u) => ({ user: u.email, who: attrLabel(u.attributes), cost: usd(u.costCents), tokens: tk(u.totalTokens) })),
+        top.map((u) => ({
+          user: u.email,
+          who: attrLabel(u.attributes),
+          cost: usd(u.costCents),
+          tokens: tk(u.totalTokens),
+        })),
       );
     } finally {
       db.close();
@@ -218,11 +226,14 @@ program
     const dims = dimensionsOf(attributes);
     if (memberships.size) {
       console.log("\nTimeline (from your projects file):\n");
-      for (const facet of TIMELINE_FACETS) console.log(`  - ${timelineDimensionId(facet)}  (${TIMELINE_DIMENSION_LABELS[facet]})`);
+      for (const facet of TIMELINE_FACETS)
+        console.log(`  - ${timelineDimensionId(facet)}  (${TIMELINE_DIMENSION_LABELS[facet]})`);
     }
     console.log(`\n  - ${MEMBER_DIMENSION_ID}  (Member — always available, groups by raw email)`);
     if (dims.length === 0 && memberships.size === 0) {
-      console.log("\nNo CSV attributes or projects file loaded. Pass --csv/--projects or set CSV_PATH/PROJECTS_PATH in .env.");
+      console.log(
+        "\nNo CSV attributes or projects file loaded. Pass --csv/--projects or set CSV_PATH/PROJECTS_PATH in .env.",
+      );
       return;
     }
     if (dims.length) {
@@ -242,40 +253,42 @@ program
   .option("--product <product>", "restrict cost/tokens to one product")
   .option("--csv <path>", "attributes CSV (overrides CSV_PATH)")
   .option("--projects <path>", "projects YAML (overrides PROJECTS_PATH)")
-  .action((opts: { groupBy: string; from?: string; to?: string; product?: string; csv?: string; projects?: string }) => {
-    const db = openDb();
-    try {
-      const attributes = loadCsvOptional(opts.csv);
-      const memberships = loadProjectsOptional(opts.projects);
-      const selector = resolveGroupBy(attributes, memberships, opts.groupBy);
-      const groups = aggregateByKeyer(
-        db.getUserProducts({ from: opts.from, to: opts.to }),
-        db.getUserDays({ from: opts.from, to: opts.to }),
-        selector.keyer,
-        opts.product,
-      );
-      console.log(`\nUsage by ${selector.id}${opts.product ? ` (product: ${opts.product})` : ""}:\n`);
-      console.table(
-        groups.map((g) => ({
-          [selector.id]: g.key,
-          seats: g.seats,
-          active: g.activeUsers,
-          "active days": g.activeUserDays.toFixed(1),
-          cost: usd(g.costCents),
-          "$/seat": usd(g.avgCostPerSeat),
-          "$/active": usd(g.avgCostPerActiveUser),
-          tokens: tk(g.totalTokens),
-          "tok/active": tk(Math.round(g.avgTokensPerActiveUser)),
-          "cc sess": g.ccSessions.toFixed(1),
-          "sess/active": g.activeUsers ? (g.ccSessions / g.activeUsers).toFixed(1) : "0",
-          "chat msgs": g.chatMessages.toFixed(1),
-          "web srch": g.webSearches.toFixed(1),
-        })),
-      );
-    } finally {
-      db.close();
-    }
-  });
+  .action(
+    (opts: { groupBy: string; from?: string; to?: string; product?: string; csv?: string; projects?: string }) => {
+      const db = openDb();
+      try {
+        const attributes = loadCsvOptional(opts.csv);
+        const memberships = loadProjectsOptional(opts.projects);
+        const selector = resolveGroupBy(attributes, memberships, opts.groupBy);
+        const groups = aggregateByKeyer(
+          db.getUserProducts({ from: opts.from, to: opts.to }),
+          db.getUserDays({ from: opts.from, to: opts.to }),
+          selector.keyer,
+          opts.product,
+        );
+        console.log(`\nUsage by ${selector.id}${opts.product ? ` (product: ${opts.product})` : ""}:\n`);
+        console.table(
+          groups.map((g) => ({
+            [selector.id]: g.key,
+            seats: g.seats,
+            active: g.activeUsers,
+            "active days": g.activeUserDays.toFixed(1),
+            cost: usd(g.costCents),
+            "$/seat": usd(g.avgCostPerSeat),
+            "$/active": usd(g.avgCostPerActiveUser),
+            tokens: tk(g.totalTokens),
+            "tok/active": tk(Math.round(g.avgTokensPerActiveUser)),
+            "cc sess": g.ccSessions.toFixed(1),
+            "sess/active": g.activeUsers ? (g.ccSessions / g.activeUsers).toFixed(1) : "0",
+            "chat msgs": g.chatMessages.toFixed(1),
+            "web srch": g.webSearches.toFixed(1),
+          })),
+        );
+      } finally {
+        db.close();
+      }
+    },
+  );
 
 program
   .command("member")
@@ -321,7 +334,15 @@ program
   .option("--csv <path>")
   .option("--projects <path>", "projects YAML (overrides PROJECTS_PATH)")
   .action(
-    (opts: { groupBy: string; out: string; from?: string; to?: string; product?: string; csv?: string; projects?: string }) => {
+    (opts: {
+      groupBy: string;
+      out: string;
+      from?: string;
+      to?: string;
+      product?: string;
+      csv?: string;
+      projects?: string;
+    }) => {
       const db = openDb();
       try {
         const attributes = loadCsvOptional(opts.csv);
@@ -365,11 +386,15 @@ program
       return;
     }
     // Flatten memberships back out by project for a per-project summary.
-    const byProject = new Map<string, { team: string; client: string; members: number; start: string; end: string | null }>();
+    const byProject = new Map<
+      string,
+      { team: string; client: string; members: number; start: string; end: string | null }
+    >();
     for (const list of index.values()) {
       for (const m of list) {
         let p = byProject.get(m.project);
-        if (!p) byProject.set(m.project, (p = { team: m.team, client: m.client, members: 0, start: m.start, end: m.end }));
+        if (!p)
+          byProject.set(m.project, (p = { team: m.team, client: m.client, members: 0, start: m.start, end: m.end }));
         p.members += 1;
         if (m.start < p.start) p.start = m.start;
         if (p.end !== null && (m.end === null || m.end > p.end)) p.end = m.end;

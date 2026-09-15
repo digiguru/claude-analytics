@@ -10,14 +10,7 @@ import {
   type MembershipIndex,
   type TimelineFacet,
 } from "./projects.js";
-import type {
-  Attributes,
-  Dimension,
-  OrgProductRow,
-  OrgSummaryRow,
-  UserDayRow,
-  UserProductRow,
-} from "./types.js";
+import type { Attributes, Dimension, OrgProductRow, OrgSummaryRow, UserDayRow, UserProductRow } from "./types.js";
 
 // ============================================================================
 // 1) Overview (org-level): cost & usage + adoption, plus heaviest days
@@ -205,8 +198,10 @@ export interface GroupRow {
   avgTokensPerActiveUser: number;
 }
 
-interface GroupAcc
-  extends Omit<GroupRow, "seats" | "activeUsers" | "avgCostPerSeat" | "avgCostPerActiveUser" | "avgTokensPerActiveUser"> {
+interface GroupAcc extends Omit<
+  GroupRow,
+  "seats" | "activeUsers" | "avgCostPerSeat" | "avgCostPerActiveUser" | "avgTokensPerActiveUser"
+> {
   seatEmails: Set<string>;
   activeEmails: Set<string>;
 }
@@ -294,8 +289,7 @@ export interface GroupSelector {
  * MEMBER_DIMENSION_ID; the CLI didn't) with one set of supported values.
  */
 export type GroupByResolution =
-  | { ok: true; selector: GroupSelector }
-  | { ok: false; invalidValue: string; available: string[] };
+  { ok: true; selector: GroupSelector } | { ok: false; invalidValue: string; available: string[] };
 
 /**
  * Resolve a `groupBy`/`secondary` value against, in order: the timeline facets
@@ -303,10 +297,15 @@ export type GroupByResolution =
  * the reserved Member dimension (@member — always available), then the
  * columns actually present in the loaded CSV.
  */
-export function resolveGroupBy(attributes: AttributeMap, memberships: MembershipIndex, value: unknown): GroupByResolution {
+export function resolveGroupBy(
+  attributes: AttributeMap,
+  memberships: MembershipIndex,
+  value: unknown,
+): GroupByResolution {
   const raw = String(value ?? "");
   const facet = resolveTimelineDimension(raw);
-  if (facet) return { ok: true, selector: { id: timelineDimensionId(facet), keyer: timelineKeyer(memberships, facet) } };
+  if (facet)
+    return { ok: true, selector: { id: timelineDimensionId(facet), keyer: timelineKeyer(memberships, facet) } };
   if (raw.trim().toLowerCase() === MEMBER_DIMENSION_ID) {
     return { ok: true, selector: { id: MEMBER_DIMENSION_ID, keyer: memberKeyer() } };
   }
