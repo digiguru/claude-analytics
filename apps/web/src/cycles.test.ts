@@ -1,5 +1,5 @@
 import { test, expect } from "vitest";
-import { bucketByCycle, NO_CYCLE_LABEL, snapBand } from "./cycles.js";
+import { bucketByCycle, NO_CYCLE_LABEL, resolveBucket, snapBand } from "./cycles.js";
 import type { CycleDef } from "./api.js";
 
 function cycle(name: string, start: string, end: string | null = null): CycleDef {
@@ -86,4 +86,22 @@ test("snapBand: a cycle entirely outside the chart's rendered range returns null
 
 test("snapBand: no rendered labels at all returns null", () => {
   expect(snapBand(cycle("A", "2026-06-01"), [], "week")).toBe(null);
+});
+
+// ---- resolveBucket (#29: the bucket/URL desync bug) ----
+
+test("resolveBucket: 'cycle' resolves to cycle only when cycles are actually available", () => {
+  expect(resolveBucket("cycle", true)).toBe("cycle");
+  expect(resolveBucket("cycle", false)).toBe("week"); // falls back — see GroupsView for how the control avoids misrepresenting this
+});
+
+test("resolveBucket: 'day'/'month' pass through regardless of cycleAvailable", () => {
+  expect(resolveBucket("day", false)).toBe("day");
+  expect(resolveBucket("month", true)).toBe("month");
+});
+
+test("resolveBucket: anything else (including 'week' itself, or garbage) defaults to week", () => {
+  expect(resolveBucket("week", true)).toBe("week");
+  expect(resolveBucket("bogus", true)).toBe("week");
+  expect(resolveBucket("", false)).toBe("week");
 });
