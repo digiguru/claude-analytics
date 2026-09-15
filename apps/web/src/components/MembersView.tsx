@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Bar, CartesianGrid, Legend, Line, ComposedChart, ReferenceArea, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, CartesianGrid, Legend, Line, ComposedChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api, tokens, usd, type Attributes, type MemberDay, type MemberSummary, type ProjectCycles, type UserListEntry } from "../api.js";
-import { CHART_MARGIN, Y_AXIS_WIDTH, wrapLabel, xAxisProps } from "../charts.js";
+import { CHART_MARGIN, RechartsReferenceArea as ReferenceArea, Y_AXIS_WIDTH, wrapLabel, xAxisProps } from "../charts.js";
 import { snapBand } from "../cycles.js";
 import { prepareSeries, type Granularity } from "../series.js";
 import { CycleRail } from "./CycleRail.js";
@@ -185,7 +185,7 @@ export function MembersView({ from, to, filter, projectCycles, onError }: Props)
                               yAxisId="l"
                               x1={span.x1}
                               x2={span.x2}
-                              isFront={false}
+                              zIndex={0}
                               fill="#ffffff"
                               fillOpacity={i % 2 ? 0.07 : 0.04}
                               stroke="#2a2f3a"
@@ -197,7 +197,7 @@ export function MembersView({ from, to, filter, projectCycles, onError }: Props)
                         <XAxis dataKey="date" stroke="#9aa3b2" fontSize={11} {...xAxisProps(chartData.length, 10, { rotateWhenShort: true })} />
                         <YAxis yAxisId="l" stroke="#d97757" fontSize={11} width={Y_AXIS_WIDTH} />
                         <YAxis yAxisId="r" orientation="right" stroke="#5a6b8c" fontSize={11} width={Y_AXIS_WIDTH} />
-                        <Tooltip contentStyle={{ background: "#1a1d24", border: "1px solid #2a2f3a" }} formatter={(v: number, n) => (typeof n === "string" && n.startsWith("cost") ? `$${Number(v).toFixed(2)}` : v)} />
+                        <Tooltip contentStyle={{ background: "#1a1d24", border: "1px solid #2a2f3a" }} formatter={(v, n) => (typeof n === "string" && n.startsWith("cost") ? `$${Number(v ?? 0).toFixed(2)}` : Number(v ?? 0))} />
                         <Legend />
                         <Bar yAxisId="l" dataKey="cost" name="cost ($)" fill="#d97757" />
                         {showForecast && <Bar yAxisId="l" dataKey="costForecast" name="cost (forecast)" fill="#d97757" fillOpacity={0.35} />}
