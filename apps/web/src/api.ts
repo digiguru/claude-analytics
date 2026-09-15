@@ -97,6 +97,12 @@ export interface GroupDayRow {
   totalTokens: number;
 }
 
+/** A secondary-breakdown row: a normal GroupRow keyed by the secondary
+ *  dimension's value, tagged with which primary group it belongs to. */
+export interface GroupRowWithPrimary extends GroupRow {
+  primaryKey: string;
+}
+
 export interface GroupsResponse {
   dimension: string;
   product: string | null;
@@ -108,6 +114,11 @@ export interface GroupsResponse {
   /** Projects with non-zero cost under the current scope/filter, cost-desc, no Unassigned.
    *  Drives the Cycle granularity/annotation auto-unlock when it settles to one. */
   activeProjects: string[];
+  /** The resolved secondary dimension id, or null when none was requested. */
+  secondaryDimension: string | null;
+  /** Each primary group's breakdown by the secondary dimension (flat; group by
+   *  `primaryKey` client-side). Empty unless a `secondary` param was sent. */
+  secondaryGroups: GroupRowWithPrimary[];
   unmatchedCount: number;
 }
 
@@ -165,6 +176,11 @@ export interface UserListEntry {
 export type Dimension = string;
 export const PRODUCTS = ["chat", "claude_code", "cowork", "office_agent", "claude_design", "other"];
 
+/** Reserved Group By id for grouping by raw member email — mirrors core's
+ *  MEMBER_DIMENSION_ID. Always available (no CSV/projects file required). */
+export const MEMBER_DIMENSION_ID = "@member";
+export const MEMBER_DIMENSION_LABEL = "Member (email)";
+
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
@@ -190,8 +206,16 @@ export const api = {
     }).then(json<{ ok: boolean; summaryDays: number; activityDays: number; userProductRows: number; orgProductRows: number }>),
   overview: (from?: string, to?: string, filter?: string) =>
     fetch(`/api/overview${qs({ from, to, filter })}`).then(json<Overview>),
-  groups: (dimension: Dimension, from?: string, to?: string, product?: string, filter?: string, project?: string) =>
-    fetch(`/api/groups${qs({ groupBy: dimension, from, to, product, filter, project })}`).then(json<GroupsResponse>),
+  groups: (
+    dimension: Dimension,
+    from?: string,
+    to?: string,
+    product?: string,
+    filter?: string,
+    project?: string,
+    secondary?: string,
+  ) =>
+    fetch(`/api/groups${qs({ groupBy: dimension, from, to, product, filter, project, secondary })}`).then(json<GroupsResponse>),
   users: (from?: string, to?: string) => fetch(`/api/users${qs({ from, to })}`).then(json<{ users: UserListEntry[] }>),
   member: (email: string, from?: string, to?: string) =>
     fetch(`/api/members/${encodeURIComponent(email)}${qs({ from, to })}`).then(json<MemberSummary>),

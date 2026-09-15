@@ -9,6 +9,7 @@ import {
   aggregateByKeyer,
   aggregateByKeyerOverTime,
   applyTimelineFilterToKeyer,
+  combineKeyers,
   attributesFor,
   buildOverview,
   buildOverviewFromUsers,
@@ -23,6 +24,8 @@ import {
   isEmptyFilter,
   makeEmailFilter,
   makeRowWeight,
+  MEMBER_DIMENSION_ID,
+  memberKeyer,
   membersDailyCost,
   membersDailyToCsv,
   membersDailyLongToCsv,
@@ -33,6 +36,7 @@ import {
   projectScopeSpec,
   resolveDimension,
   resolveTimelineDimension,
+  splitCombinedKey,
   scaleUserDayRow,
   scaleUserProductRow,
   summarizeMember,
@@ -42,6 +46,7 @@ import {
   TIMELINE_FACETS,
   UNASSIGNED_KEY,
   type FilterSpec,
+  type GroupRow,
   type RowKeyer,
 } from "@claude-analytics/core";
 import { AppState } from "./state.js";
@@ -56,18 +61,24 @@ interface GroupSelector {
   keyer: RowKeyer;
 }
 
-/** Resolve a `groupBy` query value against the timeline facets first, then CSV columns. */
+/** One secondary-breakdown row: a normal GroupRow, keyed by the secondary
+ *  value, tagged with which primary group it belongs to. */
+type GroupRowWithPrimary = GroupRow & { primaryKey: string };
+
+/** Resolve a `groupBy`/`secondary` query value against the timeline facets
+ *  first, then the reserved Member dimension, then CSV columns. */
 function resolveGroupBy(value: unknown): GroupSelector {
   const raw = String(value ?? "");
   const facet = resolveTimelineDimension(raw);
   if (facet) return { id: timelineDimensionId(facet), keyer: timelineKeyer(state.memberships, facet) };
+  if (raw.trim().toLowerCase() === MEMBER_DIMENSION_ID) return { id: MEMBER_DIMENSION_ID, keyer: memberKeyer() };
 
   const dims = dimensionsOf(state.attributes);
   const dim = resolveDimension(state.attributes, raw);
   if (dim) return { id: dim, keyer: csvKeyer(state.attributes, dim) };
 
   const timelineIds = TIMELINE_FACETS.map(timelineDimensionId);
-  const available = [...timelineIds, ...dims];
+  const available = [...timelineIds, MEMBER_DIMENSION_ID, ...dims];
   throw new Error(
     available.length
       ? `Invalid dimension "${value}". Available: ${available.join(", ")}.`
@@ -199,46 +210,65 @@ app.get<{ Querystring: RangeQuery & { filter?: string } }>("/api/overview", asyn
   return { ...buildOverviewFromUsers(userProducts, userDays), filtered: true };
 });
 
-app.get<{ Querystring: RangeQuery & { groupBy?: string; product?: string; filter?: string; project?: string } }>(
-  "/api/groups",
-  async (req, reply) => {
-    let selector: GroupSelector;
-    let spec: FilterSpec | null;
-    try {
-      selector = resolveGroupBy(req.query.groupBy);
-      spec = resolveProjectScope(req.query.project, parseFilterParam(req.query.filter));
-    } catch (err) {
-      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
-    }
-    const { from, to, product } = req.query;
-    const emailPred = emailPredicate(spec);
-    const keyer = filteredKeyer(selector, spec);
-    const userProducts = state.db.getUserProducts({ from, to }).filter((r) => emailPred(r.email));
-    const userDays = state.db.getUserDays({ from, to }).filter((r) => emailPred(r.email));
-    const groups = aggregateByKeyer(userProducts, userDays, keyer, product);
-    const { rows: timeseries, keys } = aggregateByKeyerOverTime(userProducts, keyer, product);
-    const emails = new Set(state.db.distinctEmails());
-    const unmatched = [...emails].filter((e) => !state.attributes.has(e));
-    // Projects with non-zero cost under the current scope (cost-desc, no Unassigned) —
-    // drives the web UI's auto-unlock of Cycle granularity/bands when it settles to one.
-    const activeProjects = state.memberships.size
-      ? aggregateByKeyerOverTime(
-          userProducts,
-          applyTimelineFilterToKeyer(timelineKeyer(state.memberships, "project"), "@project", state.memberships, spec),
-          product,
-        ).keys.filter((k) => k !== UNASSIGNED_KEY)
-      : [];
-    return {
-      dimension: selector.id,
-      product: product ?? null,
-      groups,
-      timeseries,
-      keys,
-      activeProjects,
-      unmatchedCount: unmatched.length,
-    };
-  },
-);
+app.get<{
+  Querystring: RangeQuery & { groupBy?: string; secondary?: string; product?: string; filter?: string; project?: string };
+}>("/api/groups", async (req, reply) => {
+  let selector: GroupSelector;
+  let secondarySelector: GroupSelector | null = null;
+  let spec: FilterSpec | null;
+  try {
+    selector = resolveGroupBy(req.query.groupBy);
+    if (req.query.secondary) secondarySelector = resolveGroupBy(req.query.secondary);
+    spec = resolveProjectScope(req.query.project, parseFilterParam(req.query.filter));
+  } catch (err) {
+    return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+  }
+  const { from, to, product } = req.query;
+  const emailPred = emailPredicate(spec);
+  const keyer = filteredKeyer(selector, spec);
+  const userProducts = state.db.getUserProducts({ from, to }).filter((r) => emailPred(r.email));
+  const userDays = state.db.getUserDays({ from, to }).filter((r) => emailPred(r.email));
+  const groups = aggregateByKeyer(userProducts, userDays, keyer, product);
+  const { rows: timeseries, keys } = aggregateByKeyerOverTime(userProducts, keyer, product);
+  const emails = new Set(state.db.distinctEmails());
+  const unmatched = [...emails].filter((e) => !state.attributes.has(e));
+  // Projects with non-zero cost under the current scope (cost-desc, no Unassigned) —
+  // drives the web UI's auto-unlock of Cycle granularity/bands when it settles to one.
+  const activeProjects = state.memberships.size
+    ? aggregateByKeyerOverTime(
+        userProducts,
+        applyTimelineFilterToKeyer(timelineKeyer(state.memberships, "project"), "@project", state.memberships, spec),
+        product,
+      ).keys.filter((k) => k !== UNASSIGNED_KEY)
+    : [];
+  // A secondary (drill-down) breakdown of each primary group — e.g. Group by
+  // Team, Secondary by Member to see who made up each team's cost. Filtered
+  // independently per dimension (via filteredKeyer) *before* combining, so
+  // applyTimelineFilterToKeyer's same-facet-as-groupBy logic still sees each
+  // keyer's own bare keys rather than a combined "primary secondary" string.
+  let secondaryDimension: string | null = null;
+  let secondaryGroups: (GroupRowWithPrimary)[] = [];
+  if (secondarySelector) {
+    const secondaryKeyer = filteredKeyer(secondarySelector, spec);
+    const nested = aggregateByKeyer(userProducts, userDays, combineKeyers(keyer, secondaryKeyer), product);
+    secondaryDimension = secondarySelector.id;
+    secondaryGroups = nested.map((g) => {
+      const { primary, secondary } = splitCombinedKey(g.key);
+      return { ...g, key: secondary, primaryKey: primary };
+    });
+  }
+  return {
+    dimension: selector.id,
+    product: product ?? null,
+    groups,
+    timeseries,
+    keys,
+    activeProjects,
+    secondaryDimension,
+    secondaryGroups,
+    unmatchedCount: unmatched.length,
+  };
+});
 
 app.get<{ Querystring: RangeQuery }>("/api/users", async (req) => {
   const { from, to } = req.query;

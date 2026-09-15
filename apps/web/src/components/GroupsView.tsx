@@ -1,11 +1,23 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Legend, ReferenceArea, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { api, PRODUCTS, tokens, usd, type GroupRow, type GroupsResponse, type ProjectCycles, type TimelineDimension } from "../api.js";
+import {
+  api,
+  MEMBER_DIMENSION_ID,
+  MEMBER_DIMENSION_LABEL,
+  PRODUCTS,
+  tokens,
+  usd,
+  type GroupRow,
+  type GroupsResponse,
+  type ProjectCycles,
+  type TimelineDimension,
+} from "../api.js";
 import { CHART_MARGIN, COLORS, NEUTRAL_COLOR, Y_AXIS_WIDTH, wrapLabel, xAxisProps } from "../charts.js";
 import { bucketByCycle, snapBand, type ChartBucket } from "../cycles.js";
 import { bucketSeries, type Granularity } from "../series.js";
 import { useUrlParam } from "../url.js";
 import { CycleRail } from "./CycleRail.js";
+import { NestedGroupsTable } from "./NestedGroupsTable.js";
 import { SortableTable, type Column } from "./SortableTable.js";
 
 /** Chart/table ordering: by metric magnitude ("size", default) or by group name ("alpha"). */
@@ -86,6 +98,7 @@ function useStackedSeries(data: GroupsResponse | null, bucket: ChartBucket, cycl
 
 export function GroupsView({ from, to, dimensions, timelineDimensions, projectCycles, filterQuery, onError }: Props) {
   const [dimension, setDimension] = useUrlParam("groupBy", "");
+  const [secondaryRaw, setSecondary] = useUrlParam("secondary", "");
   const [product, setProduct] = useUrlParam("product", "");
   const [project, setProject] = useUrlParam("project", "");
   const [metricKey, setMetricKey] = useUrlParam("metric", String(METRICS[0]!.key));
@@ -103,6 +116,20 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
     () => (timelineDimensions.find((d) => d.id === "@project")?.values ?? []).filter((v) => v !== UNASSIGNED_KEY),
     [timelineDimensions],
   );
+
+  // Secondary (drill-down) breakdown options: every Group By choice, plus the
+  // always-available Member dimension, minus whichever is currently primary
+  // (grouping by the same thing twice is meaningless).
+  const secondaryOptions = useMemo(() => {
+    const all = [
+      ...timelineDimensions.map((d) => ({ id: d.id, label: d.label })),
+      { id: MEMBER_DIMENSION_ID, label: MEMBER_DIMENSION_LABEL },
+      ...dimensions.map((d) => ({ id: d, label: d })),
+    ];
+    return all.filter((d) => d.id !== dimension);
+  }, [timelineDimensions, dimensions, dimension]);
+  const secondary = secondaryOptions.some((d) => d.id === secondaryRaw) ? secondaryRaw : "";
+  const secondaryLabel = secondaryOptions.find((d) => d.id === secondary)?.label ?? secondary;
   const cyclesForProject = useCallback(
     (name: string) => projectCycles.find((p) => p.project === name)?.cycles ?? [],
     [projectCycles],
@@ -124,14 +151,22 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
     onError(null);
     try {
       setData(
-        await api.groups(dimension, from || undefined, to || undefined, product || undefined, filterQuery, project || undefined),
+        await api.groups(
+          dimension,
+          from || undefined,
+          to || undefined,
+          product || undefined,
+          filterQuery,
+          project || undefined,
+          secondary || undefined,
+        ),
       );
     } catch (e) {
       onError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, [dimension, product, project, from, to, filterQuery, onError]);
+  }, [dimension, product, project, secondary, from, to, filterQuery, onError]);
 
   useEffect(() => {
     void load();
@@ -209,6 +244,17 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
             )}
           </select>
         </div>
+        {secondaryOptions.length > 0 && (
+          <div>
+            <label>Secondary group by</label>
+            <select value={secondary} onChange={(e) => setSecondary(e.target.value)}>
+              <option value="">None</option>
+              {secondaryOptions.map((d) => (
+                <option key={d.id} value={d.id}>{d.label}</option>
+              ))}
+            </select>
+          </div>
+        )}
         {projectNames.length > 0 && (
           <div>
             <label>Project</label>
@@ -364,12 +410,21 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
               </BarChart>
             </ResponsiveContainer>
           </div>
-          <SortableTable
-            columns={columns}
-            rows={orderedGroups}
-            initialSort={sortOrder === "alpha" ? "key" : String(metric.key)}
-            initialDesc={sortOrder !== "alpha"}
-          />
+          {data.secondaryDimension ? (
+            <NestedGroupsTable
+              columns={columns}
+              primaryRows={orderedGroups}
+              secondaryRows={data.secondaryGroups}
+              secondaryLabel={secondaryLabel}
+            />
+          ) : (
+            <SortableTable
+              columns={columns}
+              rows={orderedGroups}
+              initialSort={sortOrder === "alpha" ? "key" : String(metric.key)}
+              initialDesc={sortOrder !== "alpha"}
+            />
+          )}
         </>
       )}
 

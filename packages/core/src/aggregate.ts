@@ -233,6 +233,53 @@ export function timelineKeyer(index: MembershipIndex, facet: TimelineFacet): Row
   return (email, date) => membershipKeys(index, email, date, facet);
 }
 
+/** Reserved Group By id for grouping by raw member email — works as a primary
+ *  or secondary dimension, regardless of whether a CSV or projects file is loaded. */
+export const MEMBER_DIMENSION_ID = "@member";
+export const MEMBER_DIMENSION_LABEL = "Member";
+
+/** A keyer over the row's own email — weight always 1, ignores date. */
+export function memberKeyer(): RowKeyer {
+  return (email) => [{ key: email, weight: 1 }];
+}
+
+/** Separator joining a primary and secondary key into one combined key string —
+ *  a null character, so it can't collide with a real CSV value or email. */
+const SECONDARY_KEY_SEP = "\u0000";
+
+/**
+ * Combine two keyers into one for a secondary (drill-down) breakdown: each
+ * combined key is "primaryKey<sep>secondaryKey", weighted by the product of
+ * both keyers' weights for that row — the Cartesian product of whatever each
+ * resolves the row to (usually one entry each, but correctly distributes if
+ * either splits a row across concurrent memberships). Apply any timeline
+ * filtering to each keyer separately, before combining (see
+ * applyTimelineFilterToKeyer) — combining first would break its "same facet as
+ * the groupBy" branch, which needs each keyer's own bare, unprefixed keys.
+ */
+export function combineKeyers(primary: RowKeyer, secondary: RowKeyer): RowKeyer {
+  return (email, date) => {
+    const primaryEntries = primary(email, date);
+    if (primaryEntries.length === 0) return [];
+    const secondaryEntries = secondary(email, date);
+    if (secondaryEntries.length === 0) return [];
+    const out: { key: string; weight: number }[] = [];
+    for (const p of primaryEntries) {
+      for (const s of secondaryEntries) {
+        out.push({ key: `${p.key}${SECONDARY_KEY_SEP}${s.key}`, weight: p.weight * s.weight });
+      }
+    }
+    return out;
+  };
+}
+
+/** Split a combineKeyers key back into its primary/secondary parts. */
+export function splitCombinedKey(key: string): { primary: string; secondary: string } {
+  const idx = key.indexOf(SECONDARY_KEY_SEP);
+  if (idx === -1) return { primary: key, secondary: "" };
+  return { primary: key.slice(0, idx), secondary: key.slice(idx + 1) };
+}
+
 /**
  * Scale a userProducts/userDays row's numeric metrics by a weight in [0,1].
  * Used where a keyer isn't available (building the org-style overview, or
