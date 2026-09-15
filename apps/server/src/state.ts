@@ -20,12 +20,17 @@ export interface ServerConfig {
 }
 
 export function loadConfig(): ServerConfig {
+  const portRaw = process.env.PORT ?? "3000";
+  const port = Number(portRaw);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    throw new Error(`Invalid PORT "${portRaw}" — must be an integer between 0 and 65535.`);
+  }
   return {
     apiKey: process.env.ANTHROPIC_ANALYTICS_API_KEY ?? process.env.ANTHROPIC_ADMIN_API_KEY ?? "",
     dbPath: resolve(process.env.DB_PATH ?? "./data/analytics.db"),
     csvPath: process.env.CSV_PATH ? resolve(process.env.CSV_PATH) : undefined,
     projectsPath: resolve(process.env.PROJECTS_PATH ?? "./config/projects.yaml"),
-    port: Number(process.env.PORT ?? 3000),
+    port,
   };
 }
 
@@ -41,28 +46,44 @@ export class AppState {
   projectCount = 0;
   cycleCount = 0;
   projectWarnings: string[] = [];
+  /** True while a /api/sync request is in flight — guards against two
+   *  concurrent syncs doubling upstream traffic and interleaving writes. */
+  syncInFlight = false;
 
-  constructor() {
-    this.config = loadConfig();
-    this.db = new MetricsDb(this.config.dbPath);
+  constructor(config: ServerConfig = loadConfig(), db: MetricsDb = new MetricsDb(config.dbPath)) {
+    this.config = config;
+    this.db = db;
     this.loadDefaultCsv();
     this.loadDefaultProjects();
   }
 
+  /** A malformed CSV_PATH/PROJECTS_PATH must not take the whole server down at
+   *  boot — start with an empty map instead and surface the problem via
+   *  /api/status.projectWarnings, which already exists for exactly this. */
   private loadDefaultCsv(): void {
     const { csvPath } = this.config;
-    if (csvPath && existsSync(csvPath)) {
+    if (!csvPath || !existsSync(csvPath)) return;
+    try {
       const { attributes, count } = loadAttributesCsv(csvPath);
       this.attributes = attributes;
       this.csvSource = `${csvPath} (${count} rows)`;
+    } catch (err) {
+      this.projectWarnings.push(
+        `CSV_PATH (${csvPath}) failed to load: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 
   private loadDefaultProjects(): void {
     const { projectsPath } = this.config;
-    if (projectsPath && existsSync(projectsPath)) {
+    if (!projectsPath || !existsSync(projectsPath)) return;
+    try {
       const result = loadProjectsYaml(projectsPath);
       this.setProjects(result, `${projectsPath} (${result.projectCount} project(s))`);
+    } catch (err) {
+      this.projectWarnings.push(
+        `PROJECTS_PATH (${projectsPath}) failed to load: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 

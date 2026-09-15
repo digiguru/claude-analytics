@@ -11,6 +11,7 @@ import {
   hiddenCount,
   isEmptyFilter,
   loadActiveFilter,
+  parseFilterSpecJSON,
   persistActiveFilter,
   type FilterSpec,
 } from "./filters.js";
@@ -27,12 +28,8 @@ const TABS: { id: Tab; label: string }[] = [
 function initialFilter(): FilterSpec {
   const raw = readParams().get("filter");
   if (raw) {
-    try {
-      const obj = JSON.parse(raw) as FilterSpec;
-      if (obj?.hidden && typeof obj.hidden === "object") return obj;
-    } catch {
-      /* malformed param — fall through to localStorage */
-    }
+    const spec = parseFilterSpecJSON(raw);
+    if (spec) return spec;
   }
   return loadActiveFilter();
 }
@@ -58,12 +55,8 @@ export function App() {
     const sync = () => {
       const raw = readParams().get("filter");
       if (!raw) return setFilter((cur) => (isEmptyFilter(cur) ? cur : loadActiveFilter()));
-      try {
-        const obj = JSON.parse(raw) as FilterSpec;
-        if (obj?.hidden && typeof obj.hidden === "object") setFilter(obj);
-      } catch {
-        /* ignore malformed param */
-      }
+      const spec = parseFilterSpecJSON(raw);
+      if (spec) setFilter(spec);
     };
     window.addEventListener("popstate", sync);
     return () => window.removeEventListener("popstate", sync);

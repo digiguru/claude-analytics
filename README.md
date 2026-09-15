@@ -213,6 +213,10 @@ Started with `npm run dev` (see [Run it locally](#run-it-locally)). The three ta
 - **Groups & products** — aggregate any metric by any CSV column or by Project/Team/Client (if a projects file is loaded), with a cost-over-time chart, filter to a product, export CSV. Pick a **Secondary group by** (any other dimension, including **Member**) to drill into each group's own breakdown — e.g. Group by Team, Secondary by Member, to see who made up a team's cost.
 - **Members** — per-person cross-product usage, cost-by-product, daily trends.
 
+## Security & deployment constraints
+
+The server has **no authentication** and binds to `127.0.0.1` only, by design — that binding is the only thing standing between an anonymous caller and every employee email, per-person cost/token spend, HR-ish CSV attributes, and the ability to trigger a sync against the org's analytics key. **Do not expose this server beyond localhost** — no `--host`, no SSH port-forward exposing it further, no container port mapping to a reachable interface — without adding real authentication first. State-mutating endpoints (`/api/csv`, `/api/projects`, `/api/sync`) additionally reject cross-origin requests (a mismatched `Origin` header), which defends against a malicious page in the same browser silently triggering them, but is not a substitute for the localhost-only binding.
+
 ## Notes on the data
 
 - Available from **2026-01-01** onward. Activity/summaries lag ~3 days; cost/usage refresh every ~4h and can revise for up to 30 days. `sync` clamps date ranges to what the API will serve.

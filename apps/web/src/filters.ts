@@ -32,7 +32,41 @@ export function isEmptyFilter(spec: FilterSpec | null | undefined): boolean {
 
 export function hiddenCount(spec: FilterSpec | null | undefined): number {
   if (!spec || !spec.hidden) return 0;
-  return Object.values(spec.hidden).reduce((n, v) => n + (v?.length ?? 0), 0);
+  return Object.values(spec.hidden).reduce((n, v) => n + (Array.isArray(v) ? v.length : 0), 0);
+}
+
+/**
+ * Validate a JSON-parsed value as a well-formed FilterSpec: `hidden` must be a
+ * plain object whose every value is an array of strings. Anything else (a
+ * bare string, a non-array, a nested object) is dropped facet-by-facet rather
+ * than accepted wholesale — see #17: an unchecked cast here previously let a
+ * malformed shape (`{"hidden":{"Team":"Platform"}}`) turn exact matching into
+ * substring matching, because `Array.prototype.includes` on a hidden value
+ * that was actually a string resolves to `String.prototype.includes`.
+ */
+export function parseFilterSpec(raw: unknown): FilterSpec | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const hidden = (raw as { hidden?: unknown }).hidden;
+  if (!hidden || typeof hidden !== "object" || Array.isArray(hidden)) return null;
+  const out: Record<string, string[]> = {};
+  for (const [facet, values] of Object.entries(hidden as Record<string, unknown>)) {
+    if (!Array.isArray(values)) continue;
+    const strings = values.filter((v): v is string => typeof v === "string");
+    if (strings.length) out[facet] = strings;
+  }
+  return { hidden: out };
+}
+
+/** Parse a filter spec from a JSON string (the `?filter=` URL param, or
+ *  localStorage), validating its shape per {@link parseFilterSpec}. Returns
+ *  null for malformed JSON, or for a value that isn't shaped like a
+ *  FilterSpec at all — never throws. */
+export function parseFilterSpecJSON(raw: string): FilterSpec | null {
+  try {
+    return parseFilterSpec(JSON.parse(raw));
+  } catch {
+    return null;
+  }
 }
 
 /** The group value of a user along a dimension — same rules as core's groupKey. */
@@ -76,9 +110,13 @@ export function userPasses(spec: FilterSpec | null | undefined, user: UserListEn
   if (isEmptyFilter(spec)) return true;
   const hidden = spec!.hidden;
   const emailHidden = hidden[EMAIL_FACET];
-  if (emailHidden && emailHidden.includes(user.email)) return false;
+  // Array.isArray guards are defensive per #17: userPasses is reachable from
+  // more than one path, and a hidden value that's a bare string would
+  // otherwise resolve .includes to String.prototype.includes (substring
+  // matching) instead of Array.prototype.includes (exact matching).
+  if (Array.isArray(emailHidden) && emailHidden.includes(user.email)) return false;
   for (const [facet, values] of Object.entries(hidden)) {
-    if (facet === EMAIL_FACET || !values?.length) continue;
+    if (facet === EMAIL_FACET || !Array.isArray(values) || !values.length) continue;
     if (facet.startsWith("@")) {
       const groups = user.groups?.[facet] ?? [];
       if (groups.length > 0 && groups.every((g) => values.includes(g))) return false;
@@ -169,8 +207,8 @@ export function loadActiveFilter(): FilterSpec {
   try {
     const raw = localStorage.getItem(ACTIVE_KEY);
     if (raw) {
-      const obj = JSON.parse(raw) as FilterSpec;
-      if (obj?.hidden && typeof obj.hidden === "object") return obj;
+      const spec = parseFilterSpec(JSON.parse(raw));
+      if (spec) return spec;
     }
   } catch {
     /* ignore */

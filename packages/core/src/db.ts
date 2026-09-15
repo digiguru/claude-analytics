@@ -119,7 +119,7 @@ export class MetricsDb {
         office_messages=excluded.office_messages, web_searches=excluded.web_searches, raw_json=excluded.raw_json
     `);
     this.db.transaction((items: UserDayRow[]) =>
-      items.forEach((r) => stmt.run({ ...r, rawJson: JSON.stringify(r.raw) })),
+      items.forEach((r) => stmt.run({ ...r, rawJson: JSON.stringify(r.raw ?? null) })),
     )(rows);
   }
 
