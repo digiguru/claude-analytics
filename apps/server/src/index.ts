@@ -248,6 +248,8 @@ app.get<{
   // keyer's own bare keys rather than a combined "primary secondary" string.
   let secondaryDimension: string | null = null;
   let secondaryGroups: (GroupRowWithPrimary)[] = [];
+  let secondaryTimeseries: typeof timeseries = [];
+  let secondaryKeys: string[] = [];
   if (secondarySelector) {
     const secondaryKeyer = filteredKeyer(secondarySelector, spec);
     const nested = aggregateByKeyer(userProducts, userDays, combineKeyers(keyer, secondaryKeyer), product);
@@ -256,6 +258,14 @@ app.get<{
       const { primary, secondary } = splitCombinedKey(g.key);
       return { ...g, key: secondary, primaryKey: primary };
     });
+    // Independent (not combined-key) time series for the secondary dimension
+    // alone, so the "Cost over time" chart can stack by it directly — e.g.
+    // Group by Team, Secondary by Member: the chart stacks by member, the
+    // table drills Team -> Member. Uses the same already-filtered keyer as
+    // the drill-down above, just aggregated on its own rather than combined.
+    const secondaryOverTime = aggregateByKeyerOverTime(userProducts, secondaryKeyer, product);
+    secondaryTimeseries = secondaryOverTime.rows;
+    secondaryKeys = secondaryOverTime.keys;
   }
   return {
     dimension: selector.id,
@@ -266,6 +276,8 @@ app.get<{
     activeProjects,
     secondaryDimension,
     secondaryGroups,
+    secondaryTimeseries,
+    secondaryKeys,
     unmatchedCount: unmatched.length,
   };
 });

@@ -119,6 +119,11 @@ export interface GroupsResponse {
   /** Each primary group's breakdown by the secondary dimension (flat; group by
    *  `primaryKey` client-side). Empty unless a `secondary` param was sent. */
   secondaryGroups: GroupRowWithPrimary[];
+  /** Daily cost/tokens per SECONDARY key (independent of the primary dimension) —
+   *  feeds the "Cost over time" chart, stacked by secondary, when one is set. */
+  secondaryTimeseries: GroupDayRow[];
+  /** Every key in `secondaryTimeseries`, ordered by total cost descending. */
+  secondaryKeys: string[];
   unmatchedCount: number;
 }
 

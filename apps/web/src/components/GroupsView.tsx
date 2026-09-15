@@ -7,6 +7,7 @@ import {
   PRODUCTS,
   tokens,
   usd,
+  type GroupDayRow,
   type GroupRow,
   type GroupsResponse,
   type ProjectCycles,
@@ -71,18 +72,25 @@ const GRANULARITIES: { key: Granularity; label: string }[] = [
 /** Pivot the daily group×date rows into one row per bucket with a cost column per
  *  key, capping the stack at the top MAX_STACK_KEYS keys (by total cost) plus an
  *  "Other" catch-all. Unassigned always renders, last, regardless of rank. Buckets
- *  by day/week/month, or — when scoped to one project with cycles — by cycle. */
-function useStackedSeries(data: GroupsResponse | null, bucket: ChartBucket, cycles: ProjectCycles["cycles"]) {
+ *  by day/week/month, or — when scoped to one project with cycles — by cycle.
+ *  Takes explicit timeseries/keys (rather than the whole GroupsResponse) so the
+ *  caller can choose the primary or secondary breakdown to chart. */
+function useStackedSeries(
+  timeseries: GroupDayRow[],
+  keys: string[],
+  bucket: ChartBucket,
+  cycles: ProjectCycles["cycles"],
+) {
   return useMemo(() => {
-    if (!data || data.timeseries.length === 0) return { rows: [] as Record<string, number | string>[], keys: [] as string[] };
+    if (timeseries.length === 0) return { rows: [] as Record<string, number | string>[], keys: [] as string[] };
 
-    const rankedKeys = data.keys.filter((k) => k !== UNASSIGNED_KEY);
-    const hasUnassigned = data.keys.includes(UNASSIGNED_KEY);
+    const rankedKeys = keys.filter((k) => k !== UNASSIGNED_KEY);
+    const hasUnassigned = keys.includes(UNASSIGNED_KEY);
     const top = new Set(rankedKeys.slice(0, MAX_STACK_KEYS));
     const hasOther = rankedKeys.length > top.size;
 
     const byDate = new Map<string, Record<string, number | string>>();
-    for (const row of data.timeseries) {
+    for (const row of timeseries) {
       let acc = byDate.get(row.date);
       if (!acc) byDate.set(row.date, (acc = { date: row.date }));
       const label = row.key === UNASSIGNED_KEY || top.has(row.key) ? row.key : OTHER_KEY;
@@ -91,9 +99,9 @@ function useStackedSeries(data: GroupsResponse | null, bucket: ChartBucket, cycl
     const daily = [...byDate.values()].sort((a, b) => String(a.date).localeCompare(String(b.date)));
     const bucketed = bucket === "cycle" ? bucketByCycle(daily, cycles) : bucketSeries(daily, bucket, {});
 
-    const keys = [...rankedKeys.filter((k) => top.has(k)), ...(hasOther ? [OTHER_KEY] : []), ...(hasUnassigned ? [UNASSIGNED_KEY] : [])];
-    return { rows: bucketed, keys };
-  }, [data, bucket, cycles]);
+    const outKeys = [...rankedKeys.filter((k) => top.has(k)), ...(hasOther ? [OTHER_KEY] : []), ...(hasUnassigned ? [UNASSIGNED_KEY] : [])];
+    return { rows: bucketed, keys: outKeys };
+  }, [timeseries, keys, bucket, cycles]);
 }
 
 export function GroupsView({ from, to, dimensions, timelineDimensions, projectCycles, filterQuery, onError }: Props) {
@@ -194,7 +202,11 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
   }, [data, sortOrder, metric.key]);
 
   const chartData = orderedGroups.map((g) => ({ name: g.key, value: Number(g[metric.key]) }));
-  const stacked = useStackedSeries(data, bucket, scopeCycles);
+  // Chart stacks by the secondary dimension when one is set (e.g. Group by
+  // Team, Secondary by Member -> the chart stacks by member), else the primary.
+  const chartTimeseries = data?.secondaryDimension ? data.secondaryTimeseries : data?.timeseries ?? [];
+  const chartKeys = data?.secondaryDimension ? data.secondaryKeys : data?.keys ?? [];
+  const stacked = useStackedSeries(chartTimeseries, chartKeys, bucket, scopeCycles);
   const stackColor = useMemo(() => {
     const colorByKey = new Map<string, string>();
     let i = 0;
@@ -310,7 +322,9 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
       {data && stacked.rows.length > 0 && (
         <div style={{ marginBottom: 20 }}>
           <div className="row" style={{ marginBottom: 8, alignItems: "center" }}>
-            <h3 style={{ margin: 0 }}>Cost over time</h3>
+            <h3 style={{ margin: 0 }}>
+              Cost over time{data?.secondaryDimension ? ` (by ${secondaryLabel})` : ""}
+            </h3>
             <div className="segmented" role="group" aria-label="Granularity">
               {GRANULARITIES.map((g) => (
                 <button
