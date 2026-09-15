@@ -8,8 +8,10 @@ import {
   combineKeyers,
   csvKeyer,
   cycleKeyer,
+  MEMBER_DIMENSION_ID,
   memberKeyer,
   rankUsers,
+  resolveGroupBy,
   scaleUserDayRow,
   scaleUserProductRow,
   splitCombinedKey,
@@ -330,4 +332,51 @@ test("scaleUserDayRow: scales every numeric activity metric by the weight, leavi
   expect(scaled.ccSessions).toBe(1);
   expect(scaled.webSearches).toBe(3);
   expect(scaled.raw).toBe(row.raw);
+});
+
+// ---- resolveGroupBy (#28: was two independently-drifted copies in server/cli) ----
+
+test("resolveGroupBy: resolves a timeline facet id when a projects file is loaded", () => {
+  const { index } = parseProjectsYaml(`
+projects:
+  - name: Acme
+    members:
+      - email: a@x.com
+        start: 2026-01-01
+`);
+  const result = resolveGroupBy(new Map(), index, "@project");
+  expect(result.ok).toBe(true);
+  if (result.ok) expect(result.selector.id).toBe("@project");
+});
+
+test("resolveGroupBy: always resolves the reserved @member dimension, with no CSV or projects file needed", () => {
+  const result = resolveGroupBy(new Map(), new Map(), MEMBER_DIMENSION_ID);
+  expect(result.ok).toBe(true);
+  if (result.ok) {
+    expect(result.selector.id).toBe(MEMBER_DIMENSION_ID);
+    expect(result.selector.keyer("a@x.com", "2026-01-01")).toEqual([{ key: "a@x.com", weight: 1 }]);
+  }
+});
+
+test("resolveGroupBy: resolves a CSV column case-insensitively", () => {
+  const attrs = new Map([["a@x.com", { Level: "Senior" }]]);
+  const result = resolveGroupBy(attrs, new Map(), "level");
+  expect(result.ok).toBe(true);
+  if (result.ok) expect(result.selector.id).toBe("Level");
+});
+
+test("resolveGroupBy: an unresolvable value reports the invalid value and every available option, not a message string", () => {
+  const attrs = new Map([["a@x.com", { Level: "Senior" }]]);
+  const result = resolveGroupBy(attrs, new Map(), "bogus");
+  expect(result.ok).toBe(false);
+  if (!result.ok) {
+    expect(result.invalidValue).toBe("bogus");
+    expect(result.available).toEqual(["@project", "@team", "@client", MEMBER_DIMENSION_ID, "Level"]);
+  }
+});
+
+test("resolveGroupBy: with nothing loaded at all, the timeline facets and @member are still reported as available", () => {
+  const result = resolveGroupBy(new Map(), new Map(), "bogus");
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.available).toEqual(["@project", "@team", "@client", MEMBER_DIMENSION_ID]);
 });

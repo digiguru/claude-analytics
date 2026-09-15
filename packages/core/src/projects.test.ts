@@ -4,8 +4,10 @@ import {
   cyclesFor,
   membershipKeys,
   NONE_KEY,
+  parseProjectCycles,
   parseProjectsYaml,
   UNASSIGNED_KEY,
+  type Membership,
 } from "./projects.js";
 
 const YAML_BASIC_CYCLES = `
@@ -135,4 +137,72 @@ projects:
   const { index } = parseProjectsYaml(yaml);
   const keys = membershipKeys(index, "a@x.com", "2026-01-02", "team");
   expect(keys).toEqual([{ key: NONE_KEY, weight: 1 }]);
+});
+
+// ---- parseProjectCycles, extracted from parseProjectsYaml (#28) ----
+
+function membership(overrides: Partial<Membership> = {}): Membership {
+  return { project: "P", team: NONE_KEY, client: NONE_KEY, start: "2026-01-01", end: null, allocation: 1, ...overrides };
+}
+
+test("parseProjectCycles: no cycles declared returns an empty list with no warnings", () => {
+  const warnings: string[] = [];
+  expect(parseProjectCycles("P", undefined, [membership()], warnings)).toEqual([]);
+  expect(warnings).toEqual([]);
+});
+
+test("parseProjectCycles: cycles with no valid members still resolve, but warn", () => {
+  const warnings: string[] = [];
+  const cycles = parseProjectCycles("P", [{ name: "A", start: "2026-01-01" }], [], warnings);
+  expect(cycles).toHaveLength(1);
+  expect(warnings.some((w) => w.includes("has cycles but no valid members"))).toBe(true);
+});
+
+test("parseProjectCycles: a malformed entry (not an object, missing name, missing/invalid start) is skipped with a warning", () => {
+  const warnings: string[] = [];
+  const cycles = parseProjectCycles(
+    "P",
+    [null, { start: "2026-01-01" }, { name: "Bad Start", start: "not-a-date" }, { name: "Good", start: "2026-01-01" }],
+    [membership()],
+    warnings,
+  );
+  expect(cycles.map((c) => c.name)).toEqual(["Good"]);
+  expect(warnings).toHaveLength(3);
+});
+
+test("parseProjectCycles: an end before start is skipped with a warning", () => {
+  const warnings: string[] = [];
+  const cycles = parseProjectCycles("P", [{ name: "Bad", start: "2026-02-01", end: "2026-01-01" }], [membership()], warnings);
+  expect(cycles).toEqual([]);
+  expect(warnings.some((w) => w.includes('"end" (2026-01-01) is before "start" (2026-02-01)'))).toBe(true);
+});
+
+test("parseProjectCycles: derives an omitted end from the next cycle's start, chronologically even out of declaration order", () => {
+  const warnings: string[] = [];
+  const cycles = parseProjectCycles(
+    "P",
+    [
+      { name: "Second", start: "2026-02-01" },
+      { name: "First", start: "2026-01-01" },
+    ],
+    [membership()],
+    warnings,
+  );
+  expect(cycles.map((c) => c.name)).toEqual(["First", "Second"]); // sorted by start, not declaration order
+  const first = cycles.find((c) => c.name === "First")!;
+  expect(first.end).toBe("2026-01-31");
+  expect(first.derivedEnd).toBe(true);
+  const second = cycles.find((c) => c.name === "Second")!;
+  expect(second.end).toBe(null); // final cycle stays open-ended
+});
+
+test("parseProjectCycles: a cycle outside every member assignment warns", () => {
+  const warnings: string[] = [];
+  parseProjectCycles(
+    "P",
+    [{ name: "TooEarly", start: "2025-01-01", end: "2025-06-01" }],
+    [membership({ start: "2026-01-01" })],
+    warnings,
+  );
+  expect(warnings.some((w) => w.includes("falls outside every member assignment"))).toBe(true);
 });

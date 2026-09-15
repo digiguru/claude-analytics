@@ -14,7 +14,6 @@ import {
   buildOverview,
   buildOverviewFromUsers,
   createClient,
-  csvKeyer,
   CYCLE_DIMENSION_ID,
   cycleKeyer,
   cyclesFor,
@@ -26,8 +25,6 @@ import {
   isEmptyFilter,
   makeEmailFilter,
   makeRowWeight,
-  MEMBER_DIMENSION_ID,
-  memberKeyer,
   membersDailyCost,
   membersDailyToCsv,
   membersDailyLongToCsv,
@@ -36,7 +33,7 @@ import {
   parseFilterParam,
   parseProjectsYaml,
   timelineScopeSpec,
-  resolveDimension,
+  resolveGroupBy as coreResolveGroupBy,
   resolveTimelineDimension,
   splitCombinedKey,
   scaleUserDayRow,
@@ -49,42 +46,30 @@ import {
   UNASSIGNED_KEY,
   type FilterSpec,
   type GroupRow,
+  type GroupSelector,
   type RowKeyer,
   type TimelineFacet,
 } from "@claude-analytics/core";
+import type { FastifyReply } from "fastify";
 import { AppState } from "./state.js";
 
 const state = new AppState();
 const app = Fastify({ logger: true });
 await app.register(multipart);
 
-/** A resolved Group By selection: its canonical id (CSV column name, or "@project" etc.) and keyer. */
-interface GroupSelector {
-  id: string;
-  keyer: RowKeyer;
-}
-
 /** One secondary-breakdown row: a normal GroupRow, keyed by the secondary
  *  value, tagged with which primary group it belongs to. */
 type GroupRowWithPrimary = GroupRow & { primaryKey: string };
 
-/** Resolve a `groupBy`/`secondary` query value against the timeline facets
- *  first, then the reserved Member dimension, then CSV columns. */
+/** Resolve a `groupBy`/`secondary` query value (see core's resolveGroupBy for
+ *  the shared resolution order); throws on an invalid value — every route
+ *  that calls this already catches and 400s (see routeError). */
 function resolveGroupBy(value: unknown): GroupSelector {
-  const raw = String(value ?? "");
-  const facet = resolveTimelineDimension(raw);
-  if (facet) return { id: timelineDimensionId(facet), keyer: timelineKeyer(state.memberships, facet) };
-  if (raw.trim().toLowerCase() === MEMBER_DIMENSION_ID) return { id: MEMBER_DIMENSION_ID, keyer: memberKeyer() };
-
-  const dims = dimensionsOf(state.attributes);
-  const dim = resolveDimension(state.attributes, raw);
-  if (dim) return { id: dim, keyer: csvKeyer(state.attributes, dim) };
-
-  const timelineIds = TIMELINE_FACETS.map(timelineDimensionId);
-  const available = [...timelineIds, MEMBER_DIMENSION_ID, ...dims];
+  const result = coreResolveGroupBy(state.attributes, state.memberships, value);
+  if (result.ok) return result.selector;
   throw new Error(
-    available.length
-      ? `Invalid dimension "${value}". Available: ${available.join(", ")}.`
+    result.available.length
+      ? `Invalid dimension "${result.invalidValue}". Available: ${result.available.join(", ")}.`
       : `No CSV or projects file loaded — upload one to group by attributes.`,
   );
 }
@@ -199,6 +184,65 @@ function scaleRows<T extends { email: string; date: string }>(
   return out;
 }
 
+/** 400 a route with whatever message the caught error carries (or its string form). */
+function routeError(reply: FastifyReply, err: unknown) {
+  return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+}
+
+type GroupQuery = RangeQuery & {
+  product?: string;
+  filter?: string;
+  scope?: string;
+  scopeDimension?: string;
+  groupBy?: string;
+};
+
+interface ResolvedGroupQuery {
+  from?: string;
+  to?: string;
+  product?: string;
+  spec: FilterSpec | null;
+  userProducts: ReturnType<typeof state.db.getUserProducts>;
+  activeProjects: string[];
+  selector: GroupSelector;
+}
+
+/**
+ * Shared preamble for the three groupBy-driven routes (/api/groups,
+ * /api/export, /api/export/groups-daily) — per #28, this is the
+ * `resolveQuery`-style helper that replaces what used to be ~15 lines
+ * independently repeated in each: parse+merge scope/filter into one
+ * FilterSpec, fetch userProducts already filtered by the resulting email
+ * predicate, compute activeProjects, and resolve the groupBy selector. Throws
+ * on bad scope/filter/groupBy input — callers 400 it via routeError.
+ */
+function resolveGroupQuery(query: GroupQuery): ResolvedGroupQuery {
+  const spec = resolveTimelineScope(query.scope, query.scopeDimension, query.groupBy, parseFilterParam(query.filter));
+  const emailPred = emailPredicate(spec);
+  const userProducts = state.db.getUserProducts({ from: query.from, to: query.to }).filter((r) => emailPred(r.email));
+  const activeProjects = activeProjectsFor(userProducts, query.product, spec);
+  const selector = resolveDimensionKeyer(query.groupBy, activeProjects);
+  return { from: query.from, to: query.to, product: query.product, spec, userProducts, activeProjects, selector };
+}
+
+/**
+ * Shared preamble for the two per-member export routes (/api/export/members,
+ * /api/export/members-long): parse `filter`, fetch+scale userProducts by the
+ * resulting per-row timeline weight, and list the (filtered) population of
+ * known emails to seed rows for people with zero cost. Per #28.
+ */
+function resolveMemberRows(query: RangeQuery & { filter?: string }) {
+  const spec = parseFilterParam(query.filter);
+  const emailPred = emailPredicate(spec);
+  const userProducts = scaleRows(
+    state.db.getUserProducts({ from: query.from, to: query.to }).filter((r) => emailPred(r.email)),
+    spec,
+    scaleUserProductRow,
+  );
+  const emails = state.db.distinctEmails().filter((email) => emailPred(email));
+  return { userProducts, emails };
+}
+
 app.get("/api/status", async () => {
   const range = state.db.dateRange();
   const timelineDimensions = state.memberships.size
@@ -278,32 +322,18 @@ app.get<{
     scopeDimension?: string;
   };
 }>("/api/groups", async (req, reply) => {
-  const { from, to, product } = req.query;
-  let spec: FilterSpec | null;
-  try {
-    spec = resolveTimelineScope(req.query.scope, req.query.scopeDimension, req.query.groupBy, parseFilterParam(req.query.filter));
-  } catch (err) {
-    return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
-  }
-  const emailPred = emailPredicate(spec);
-  const userProducts = state.db.getUserProducts({ from, to }).filter((r) => emailPred(r.email));
-  const userDays = state.db.getUserDays({ from, to }).filter((r) => emailPred(r.email));
-  // Projects with non-zero cost under the current scope (cost-desc, no Unassigned) —
-  // drives the web UI's auto-unlock of Cycle granularity/bands when it settles to
-  // one, and (below) whether "Stacking by: Cycle" can be resolved at all.
-  const activeProjects = activeProjectsFor(userProducts, product, spec);
-
-  let selector: GroupSelector;
+  let q: ResolvedGroupQuery;
   let secondarySelector: GroupSelector | null = null;
   try {
-    selector = resolveDimensionKeyer(req.query.groupBy, activeProjects);
-    if (req.query.secondary) secondarySelector = resolveDimensionKeyer(req.query.secondary, activeProjects);
+    q = resolveGroupQuery(req.query);
+    if (req.query.secondary) secondarySelector = resolveDimensionKeyer(req.query.secondary, q.activeProjects);
   } catch (err) {
-    return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+    return routeError(reply, err);
   }
-  const keyer = filteredKeyer(selector, spec);
-  const groups = aggregateByKeyer(userProducts, userDays, keyer, product);
-  const { rows: timeseries, keys } = aggregateByKeyerOverTime(userProducts, keyer, product);
+  const userDays = state.db.getUserDays({ from: q.from, to: q.to }).filter((r) => emailPredicate(q.spec)(r.email));
+  const keyer = filteredKeyer(q.selector, q.spec);
+  const groups = aggregateByKeyer(q.userProducts, userDays, keyer, q.product);
+  const { rows: timeseries, keys } = aggregateByKeyerOverTime(q.userProducts, keyer, q.product);
   const emails = new Set(state.db.distinctEmails());
   const unmatched = [...emails].filter((e) => !state.attributes.has(e));
   // A secondary (drill-down) breakdown of each primary group, for the totals
@@ -316,8 +346,8 @@ app.get<{
   let secondaryDimension: string | null = null;
   let secondaryGroups: (GroupRowWithPrimary)[] = [];
   if (secondarySelector) {
-    const secondaryKeyer = filteredKeyer(secondarySelector, spec);
-    const nested = aggregateByKeyer(userProducts, userDays, combineKeyers(keyer, secondaryKeyer), product);
+    const secondaryKeyer = filteredKeyer(secondarySelector, q.spec);
+    const nested = aggregateByKeyer(q.userProducts, userDays, combineKeyers(keyer, secondaryKeyer), q.product);
     secondaryDimension = secondarySelector.id;
     secondaryGroups = nested.map((g) => {
       const { primary, secondary } = splitCombinedKey(g.key);
@@ -325,12 +355,12 @@ app.get<{
     });
   }
   return {
-    dimension: selector.id,
-    product: product ?? null,
+    dimension: q.selector.id,
+    product: q.product ?? null,
     groups,
     timeseries,
     keys,
-    activeProjects,
+    activeProjects: q.activeProjects,
     secondaryDimension,
     secondaryGroups,
     unmatchedCount: unmatched.length,
@@ -387,74 +417,44 @@ app.get<{ Params: { email: string }; Querystring: RangeQuery }>("/api/members/:e
 app.get<{
   Querystring: RangeQuery & { groupBy?: string; product?: string; filter?: string; scope?: string; scopeDimension?: string };
 }>("/api/export", async (req, reply) => {
-  const { from, to, product } = req.query;
-  let spec: FilterSpec | null;
+  let q: ResolvedGroupQuery;
   try {
-    spec = resolveTimelineScope(req.query.scope, req.query.scopeDimension, req.query.groupBy, parseFilterParam(req.query.filter));
+    q = resolveGroupQuery(req.query);
   } catch (err) {
-    return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+    return routeError(reply, err);
   }
-  const emailPred = emailPredicate(spec);
-  const userProducts = state.db.getUserProducts({ from, to }).filter((r) => emailPred(r.email));
-  const userDays = state.db.getUserDays({ from, to }).filter((r) => emailPred(r.email));
-  const activeProjects = activeProjectsFor(userProducts, product, spec);
-
-  let selector: GroupSelector;
-  try {
-    selector = resolveDimensionKeyer(req.query.groupBy, activeProjects);
-  } catch (err) {
-    return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
-  }
-  const keyer = filteredKeyer(selector, spec);
-  const groups = aggregateByKeyer(userProducts, userDays, keyer, product);
+  const userDays = state.db.getUserDays({ from: q.from, to: q.to }).filter((r) => emailPredicate(q.spec)(r.email));
+  const keyer = filteredKeyer(q.selector, q.spec);
+  const groups = aggregateByKeyer(q.userProducts, userDays, keyer, q.product);
   return reply
     .header("Content-Type", "text/csv")
-    .header("Content-Disposition", `attachment; filename="by-${selector.id.replace(/^@/, "")}.csv"`)
-    .send(groupsToCsv(groups, selector.id));
+    .header("Content-Disposition", `attachment; filename="by-${q.selector.id.replace(/^@/, "")}.csv"`)
+    .send(groupsToCsv(groups, q.selector.id));
 });
 
 app.get<{
   Querystring: RangeQuery & { groupBy?: string; product?: string; filter?: string; scope?: string; scopeDimension?: string };
 }>("/api/export/groups-daily", async (req, reply) => {
-  const { from, to, product } = req.query;
-  let spec: FilterSpec | null;
+  let q: ResolvedGroupQuery;
   try {
-    spec = resolveTimelineScope(req.query.scope, req.query.scopeDimension, req.query.groupBy, parseFilterParam(req.query.filter));
+    q = resolveGroupQuery(req.query);
   } catch (err) {
-    return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+    return routeError(reply, err);
   }
-  const emailPred = emailPredicate(spec);
-  const userProducts = state.db.getUserProducts({ from, to }).filter((r) => emailPred(r.email));
-  const activeProjects = activeProjectsFor(userProducts, product, spec);
-
-  let selector: GroupSelector;
-  try {
-    selector = resolveDimensionKeyer(req.query.groupBy, activeProjects);
-  } catch (err) {
-    return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
-  }
-  const keyer = filteredKeyer(selector, spec);
-  const { rows } = aggregateByKeyerOverTime(userProducts, keyer, product);
+  const keyer = filteredKeyer(q.selector, q.spec);
+  const { rows } = aggregateByKeyerOverTime(q.userProducts, keyer, q.product);
   return reply
     .header("Content-Type", "text/csv")
-    .header("Content-Disposition", `attachment; filename="by-${selector.id.replace(/^@/, "")}-daily.csv"`)
-    .send(groupsDailyToCsv(rows, selector.id));
+    .header("Content-Disposition", `attachment; filename="by-${q.selector.id.replace(/^@/, "")}-daily.csv"`)
+    .send(groupsDailyToCsv(rows, q.selector.id));
 });
 
 app.get<{ Querystring: RangeQuery & { filter?: string } }>(
   "/api/export/members",
   async (req, reply) => {
-    const { from, to, filter } = req.query;
-    const spec = parseFilterParam(filter);
-    const emailPred = emailPredicate(spec);
-    const userProducts = scaleRows(
-      state.db.getUserProducts({ from, to }).filter((r) => emailPred(r.email)),
-      spec,
-      scaleUserProductRow,
-    );
     // Population is everyone Claude knows about (analytics emails); CSV attributes
     // are joined where they match and left blank where they don't.
-    const emails = state.db.distinctEmails().filter((email) => emailPred(email));
+    const { userProducts, emails } = resolveMemberRows(req.query);
     const { rows, dates } = membersDailyCost(userProducts, state.attributes, emails);
     return reply
       .header("Content-Type", "text/csv")
@@ -466,15 +466,7 @@ app.get<{ Querystring: RangeQuery & { filter?: string } }>(
 app.get<{ Querystring: RangeQuery & { filter?: string } }>(
   "/api/export/members-long",
   async (req, reply) => {
-    const { from, to, filter } = req.query;
-    const spec = parseFilterParam(filter);
-    const emailPred = emailPredicate(spec);
-    const userProducts = scaleRows(
-      state.db.getUserProducts({ from, to }).filter((r) => emailPred(r.email)),
-      spec,
-      scaleUserProductRow,
-    );
-    const emails = state.db.distinctEmails().filter((email) => emailPred(email));
+    const { userProducts, emails } = resolveMemberRows(req.query);
     const { rows, dates } = membersDailyCost(userProducts, state.attributes, emails);
     return reply
       .header("Content-Type", "text/csv")
