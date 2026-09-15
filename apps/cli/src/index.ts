@@ -136,6 +136,12 @@ program
           `${r.summaryDays} summary day(s), ${r.activityDays} activity day(s), ` +
           `${r.userProductRows} user×product row(s), ${r.orgProductRows} org×product row(s).`,
       );
+      if (r.unparseableAmounts > 0) {
+        console.warn(
+          `  WARNING: ${r.unparseableAmounts} cost amount(s) failed to parse and were recorded as $0. ` +
+            `Cost totals for this sync may be understated.`,
+        );
+      }
     } finally {
       db.close();
     }

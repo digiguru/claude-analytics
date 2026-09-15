@@ -240,6 +240,7 @@ export interface OrgProductRow {
   totalTokens: number;
   inputTokens: number;
   outputTokens: number;
+  cacheReadTokens: number;
   requests: number;
 }
 

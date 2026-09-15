@@ -23,6 +23,8 @@ export interface SyncResult {
   activityDays: number;
   userProductRows: number;
   orgProductRows: number;
+  /** Cost amounts that failed to parse as a decimal and were recorded as 0 (see parseCentsChecked). */
+  unparseableAmounts: number;
   effectiveRange: { from: string; to: string };
 }
 
@@ -65,6 +67,7 @@ export async function fetchRange(
   let activityDays = 0;
   let userProductRows = 0;
   let orgProductRows = 0;
+  let unparseableAmounts = 0;
 
   // 1) Org summaries (single call, range up to 366 days)
   if (start <= activityEnd) {
@@ -95,18 +98,20 @@ export async function fetchRange(
         client.getUserCost(startingAt, endingAt),
         client.getUserUsage(startingAt, endingAt),
       ]);
-      const userRows = mergeUserProducts(userCost, userUsage);
-      db.upsertUserProducts(userRows);
-      userProductRows += userRows.length;
+      const userMerge = mergeUserProducts(userCost, userUsage);
+      db.upsertUserProducts(userMerge.rows);
+      userProductRows += userMerge.rows.length;
+      unparseableAmounts += userMerge.unparseableAmounts;
 
       onProgress?.({ step: "org-cost", detail: `${chunk.from}..${chunk.to}` });
       const [orgCost, orgUsage] = await Promise.all([
         client.getOrgCost(startingAt, endingAt),
         client.getOrgUsage(startingAt, endingAt),
       ]);
-      const orgRows = mergeOrgProducts(orgCost, orgUsage);
-      db.upsertOrgProducts(orgRows);
-      orgProductRows += orgRows.length;
+      const orgMerge = mergeOrgProducts(orgCost, orgUsage);
+      db.upsertOrgProducts(orgMerge.rows);
+      orgProductRows += orgMerge.rows.length;
+      unparseableAmounts += orgMerge.unparseableAmounts;
     }
   }
 
@@ -115,6 +120,7 @@ export async function fetchRange(
     activityDays,
     userProductRows,
     orgProductRows,
+    unparseableAmounts,
     effectiveRange: { from: start, to: maxDate(activityEnd, costEnd) },
   };
 }

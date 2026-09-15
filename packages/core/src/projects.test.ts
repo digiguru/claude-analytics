@@ -1,5 +1,4 @@
-import { test } from "node:test";
-import assert from "node:assert/strict";
+import { test, expect } from "vitest";
 import {
   cycleFor,
   cyclesFor,
@@ -29,21 +28,18 @@ projects:
 test("interior null end resolves to the day before the next cycle's start", () => {
   const { cycles, warnings } = parseProjectsYaml(YAML_BASIC_CYCLES);
   const list = cyclesFor(cycles, "Flow Team #1");
-  assert.equal(list.length, 3);
+  expect(list.length).toBe(3);
   const discovery = list.find((c) => c.name === "Discovery")!;
-  assert.equal(discovery.end, "2026-04-13"); // day before Build's 2026-04-14 start
-  assert.equal(discovery.derivedEnd, true);
-  assert.deepEqual(
-    warnings.filter((w) => w.includes("Discovery")),
-    [],
-  );
+  expect(discovery.end).toBe("2026-04-13"); // day before Build's 2026-04-14 start
+  expect(discovery.derivedEnd).toBe(true);
+  expect(warnings.filter((w) => w.includes("Discovery"))).toEqual([]);
 });
 
 test("the final open cycle stays null (open-ended), not resolved against a clock", () => {
   const { cycles } = parseProjectsYaml(YAML_BASIC_CYCLES);
   const harden = cyclesFor(cycles, "Flow Team #1").find((c) => c.name === "Harden")!;
-  assert.equal(harden.end, null);
-  assert.equal(harden.derivedEnd, false);
+  expect(harden.end).toBe(null);
+  expect(harden.derivedEnd).toBe(false);
 });
 
 test("an explicit end that overlaps the next cycle is clamped and warned", () => {
@@ -62,8 +58,8 @@ projects:
 `;
   const { cycles, warnings } = parseProjectsYaml(yaml);
   const a = cyclesFor(cycles, "P").find((c) => c.name === "A")!;
-  assert.equal(a.end, "2026-01-31"); // day before B's 2026-02-01 start
-  assert.ok(warnings.some((w) => w.includes("overlaps the next cycle") && w.includes("truncated to 2026-01-31")));
+  expect(a.end).toBe("2026-01-31"); // day before B's 2026-02-01 start
+  expect(warnings.some((w) => w.includes("overlaps the next cycle") && w.includes("truncated to 2026-01-31"))).toBe(true);
 });
 
 test("duplicate cycle names within a project are disambiguated", () => {
@@ -81,14 +77,14 @@ projects:
 `;
   const { cycles, warnings } = parseProjectsYaml(yaml);
   const names = cyclesFor(cycles, "P").map((c) => c.name);
-  assert.deepEqual(names, ["Sprint", "Sprint (2)"]);
-  assert.ok(warnings.some((w) => w.includes("duplicate cycle name")));
+  expect(names).toEqual(["Sprint", "Sprint (2)"]);
+  expect(warnings.some((w) => w.includes("duplicate cycle name"))).toBe(true);
 });
 
 test("cycleFor: the next-start day belongs to the new cycle, not the old one", () => {
   const { cycles } = parseProjectsYaml(YAML_BASIC_CYCLES);
-  assert.equal(cycleFor(cycles, "Flow Team #1", "2026-04-13")?.name, "Discovery");
-  assert.equal(cycleFor(cycles, "Flow Team #1", "2026-04-14")?.name, "Build");
+  expect(cycleFor(cycles, "Flow Team #1", "2026-04-13")?.name).toBe("Discovery");
+  expect(cycleFor(cycles, "Flow Team #1", "2026-04-14")?.name).toBe("Build");
 });
 
 test("a cycle window outside every member assignment warns", () => {
@@ -104,7 +100,7 @@ projects:
         start: 2026-01-01
 `;
   const { warnings } = parseProjectsYaml(yaml);
-  assert.ok(warnings.some((w) => w.includes("falls outside every member assignment")));
+  expect(warnings.some((w) => w.includes("falls outside every member assignment"))).toBe(true);
 });
 
 test("a project with cycles but no valid members warns", () => {
@@ -117,15 +113,15 @@ projects:
     members: []
 `;
   const { warnings } = parseProjectsYaml(yaml);
-  assert.ok(warnings.some((w) => w.includes("has cycles but no valid members")));
+  expect(warnings.some((w) => w.includes("has cycles but no valid members"))).toBe(true);
 });
 
 test("membershipKeys still works unaffected by cycles (Unassigned / (none) untouched)", () => {
   const { index } = parseProjectsYaml(YAML_BASIC_CYCLES);
   const keys = membershipKeys(index, "a@x.com", "2026-04-01", "team");
-  assert.deepEqual(keys, [{ key: "Flow", weight: 1 }]);
+  expect(keys).toEqual([{ key: "Flow", weight: 1 }]);
   const noMember = membershipKeys(index, "nobody@x.com", "2026-04-01", "project");
-  assert.deepEqual(noMember, [{ key: UNASSIGNED_KEY, weight: 1 }]);
+  expect(noMember).toEqual([{ key: UNASSIGNED_KEY, weight: 1 }]);
 });
 
 test("a project with no team/client falls back to NONE_KEY", () => {
@@ -138,5 +134,5 @@ projects:
 `;
   const { index } = parseProjectsYaml(yaml);
   const keys = membershipKeys(index, "a@x.com", "2026-01-02", "team");
-  assert.deepEqual(keys, [{ key: NONE_KEY, weight: 1 }]);
+  expect(keys).toEqual([{ key: NONE_KEY, weight: 1 }]);
 });

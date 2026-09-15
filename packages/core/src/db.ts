@@ -41,6 +41,7 @@ export class MetricsDb {
         total_tokens INTEGER NOT NULL DEFAULT 0,
         input_tokens INTEGER NOT NULL DEFAULT 0,
         output_tokens INTEGER NOT NULL DEFAULT 0,
+        cache_read_tokens INTEGER NOT NULL DEFAULT 0,
         requests INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (date, product)
       );
@@ -68,6 +69,15 @@ export class MetricsDb {
       );
       CREATE INDEX IF NOT EXISTS idx_user_product_email ON user_product(email);
     `);
+    this.migrate();
+  }
+
+  /** Additive schema changes for databases created before a column existed. */
+  private migrate(): void {
+    const columns = this.db.prepare(`PRAGMA table_info(org_product)`).all() as { name: string }[];
+    if (!columns.some((c) => c.name === "cache_read_tokens")) {
+      this.db.exec(`ALTER TABLE org_product ADD COLUMN cache_read_tokens INTEGER NOT NULL DEFAULT 0`);
+    }
   }
 
   upsertSummaries(rows: OrgSummaryRow[]): void {
@@ -87,11 +97,12 @@ export class MetricsDb {
 
   upsertOrgProducts(rows: OrgProductRow[]): void {
     const stmt = this.db.prepare(`
-      INSERT INTO org_product (date, product, cost_cents, total_tokens, input_tokens, output_tokens, requests)
-      VALUES (@date,@product,@costCents,@totalTokens,@inputTokens,@outputTokens,@requests)
+      INSERT INTO org_product (date, product, cost_cents, total_tokens, input_tokens, output_tokens, cache_read_tokens, requests)
+      VALUES (@date,@product,@costCents,@totalTokens,@inputTokens,@outputTokens,@cacheReadTokens,@requests)
       ON CONFLICT(date,product) DO UPDATE SET
         cost_cents=excluded.cost_cents, total_tokens=excluded.total_tokens,
-        input_tokens=excluded.input_tokens, output_tokens=excluded.output_tokens, requests=excluded.requests
+        input_tokens=excluded.input_tokens, output_tokens=excluded.output_tokens,
+        cache_read_tokens=excluded.cache_read_tokens, requests=excluded.requests
     `);
     this.db.transaction((items: OrgProductRow[]) => items.forEach((r) => stmt.run(r)))(rows);
   }
@@ -169,6 +180,7 @@ export class MetricsDb {
       totalTokens: r.total_tokens as number,
       inputTokens: r.input_tokens as number,
       outputTokens: r.output_tokens as number,
+      cacheReadTokens: r.cache_read_tokens as number,
       requests: r.requests as number,
     }));
   }
