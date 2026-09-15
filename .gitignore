@@ -11,9 +11,10 @@ data/
 *.db-journal
 *.sqlite
 
-# the user's real attributes CSV (sample.csv is fine to keep)
-/private-*.csv
-export.csv
+# the user's real attributes CSV — allow-listed, not name-matched, so any
+# real people export (people.csv, headcount-2026.csv, ...) is caught too
+*.csv
+!sample.csv
 
 # the user's real projects/teams file (projects.sample.yaml is fine to keep)
 /config/projects.yaml

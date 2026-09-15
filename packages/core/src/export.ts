@@ -3,10 +3,21 @@ import type { AttributeMap } from "./csv.js";
 import type { GroupDayRow, GroupRow } from "./aggregate.js";
 import type { Attributes, Dimension, UserProductRow } from "./types.js";
 
+/**
+ * Neutralise CSV formula injection: a cell starting with `=`, `+`, `-`, `@`,
+ * tab or CR is interpreted as a formula by Excel/Sheets on open. Prefixing
+ * with a single quote forces it to be read as text. Group keys, emails and
+ * CSV attribute values all originate outside our control, so every export
+ * boundary must pass them through this first.
+ */
+export function sanitizeCsvCell(value: string): string {
+  return /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+}
+
 /** Convert group aggregates into CSV text (cost rendered in dollars). */
 export function groupsToCsv(groups: GroupRow[], dimension: Dimension): string {
   const rows = groups.map((g) => ({
-    [dimension]: g.key,
+    [dimension]: sanitizeCsvCell(g.key),
     seats: g.seats,
     active_users: g.activeUsers,
     active_user_days: Math.round(g.activeUserDays * 10) / 10,
@@ -29,7 +40,7 @@ export function groupsToCsv(groups: GroupRow[], dimension: Dimension): string {
 /** Long/tidy CSV of a group's cost over time: one row per group per day. */
 export function groupsDailyToCsv(rows: GroupDayRow[], dimension: Dimension): string {
   const out = rows.map((r) => ({
-    [dimension]: r.key,
+    [dimension]: sanitizeCsvCell(r.key),
     date: r.date,
     total_cost_usd: (r.costCents / 100).toFixed(2),
     total_tokens: r.totalTokens,
@@ -102,8 +113,8 @@ export function membersDailyCost(
  */
 export function membersDailyToCsv(rows: MemberDailyRow[], dates: string[], attributeColumns: string[]): string {
   const out = rows.map((r) => {
-    const row: Record<string, string | number> = { email: r.email };
-    for (const col of attributeColumns) row[col] = r.attributes?.[col] ?? "";
+    const row: Record<string, string | number> = { email: sanitizeCsvCell(r.email) };
+    for (const col of attributeColumns) row[col] = sanitizeCsvCell(r.attributes?.[col] ?? "");
     for (const d of dates) row[d] = ((r.costByDate[d] ?? 0) / 100).toFixed(2);
     row.total_cost_usd = (r.totalCostCents / 100).toFixed(2);
     row.total_tokens = r.totalTokens;
@@ -124,7 +135,7 @@ export function membersDailyLongToCsv(rows: MemberDailyRow[], dates: string[]): 
     for (const d of dates) {
       const cents = r.costByDate[d];
       if (cents === undefined) continue;
-      out.push({ Member: r.email, Date: d, Cost: (cents / 100).toFixed(2) });
+      out.push({ Member: sanitizeCsvCell(r.email), Date: d, Cost: (cents / 100).toFixed(2) });
     }
   }
   return stringify(out, { header: true, columns: ["Member", "Date", "Cost"] });
