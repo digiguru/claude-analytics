@@ -70,7 +70,7 @@ export function NestedGroupsTable<T extends { key: string }>({
                   <span className="muted" style={{ display: "block", marginBottom: 6 }}>
                     Breakdown by {secondaryLabel}:
                   </span>
-                  <SortableTable columns={columns} rows={subRows} initialSort="costCents" />
+                  <SortableTable columns={columns} rows={subRows} rowKey={(r) => r.key} initialSort="costCents" />
                 </td>
               </tr>
             ),

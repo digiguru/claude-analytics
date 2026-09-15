@@ -28,7 +28,9 @@ export default defineConfig({
         "packages/core/src/__fixtures__/**",
         "apps/server/src/__tests__/**",
         "apps/cli/src/__tests__/**",
+        "apps/web/src/__tests__/**",
         "apps/web/src/main.tsx",
+        "apps/web/src/testSetup.ts",
       ],
       reporter: ["text", "lcov"],
       // Phased in per sub-issue of the test coverage epic (#31): only the files a
@@ -43,16 +45,22 @@ export default defineConfig({
       // Phase 5 (#37) adds apps/cli's command modules and format helpers, after
       // moving all command logic out of index.ts's `.action()` bodies (index.ts
       // itself stays ungated commander wiring, like apps/server's index.ts).
-      // Later phases raise thresholds for the rest of packages/core and
-      // apps/web's components (#38).
+      // Phase 6 (#38) adds component tests for App.tsx and the components
+      // listed in #38's issue text (SortableTable, FilterMenu, ControlBar,
+      // SeriesControls, CycleRail, NestedGroupsTable) plus several small
+      // presentational ones it was cheap to fully cover alongside them
+      // (GroupsTableSection, KeyBreakdownRows, StackedCostTooltip,
+      // GroupTotalsChart, GroupsControls). Left untested by design, per #38's
+      // own scope: the recharts-heavy views (GroupsView, OverviewView,
+      // MembersView, CostOverTimeChart, VariableWidthBars) — assert the
+      // container renders and the right data reached it, not chart SVG
+      // geometry; that's exactly what e2e/app.spec.ts (Playwright) is for.
+      // Later phases raise thresholds for the rest of packages/core.
       //
-      // Note on #36's stated apps/web target (45% lines / 35% branches overall):
-      // that's arithmetically unreachable while apps/web/src/components/** stays
-      // untested, as this phase's own scope requires (component rendering is
-      // Phase 6, #38) — components are ~55% of apps/web's total line count, all
-      // at 0%. Gating the specific files this phase actually tests, at the levels
-      // they actually achieve, is the honest version of that intent; the
-      // workspace-wide number will clear 45%/35% once #38 lands.
+      // apps/web's steady-state target (60% lines / 50% branches overall) is
+      // met as of this phase (60.6%/50.5% on a full `test:coverage` run) —
+      // not itself machine-enforced here (thresholds below are per-file), but
+      // verified and worth keeping true going forward.
       thresholds: {
         "packages/core/src/map.ts": { lines: 70, branches: 65 },
         "packages/core/src/join.ts": { lines: 70, branches: 65 },
@@ -81,6 +89,18 @@ export default defineConfig({
         "apps/cli/src/commands/projects.ts": { lines: 85, branches: 60 },
         "apps/cli/src/commands/sync.ts": { lines: 80, branches: 70 },
         "apps/cli/src/commands/top.ts": { lines: 95, branches: 85 },
+        "apps/web/src/App.tsx": { lines: 70, branches: 60 },
+        "apps/web/src/components/ControlBar.tsx": { lines: 60, branches: 55 },
+        "apps/web/src/components/SortableTable.tsx": { lines: 80, branches: 75 },
+        "apps/web/src/components/FilterMenu.tsx": { lines: 80, branches: 75 },
+        "apps/web/src/components/CycleRail.tsx": { lines: 95, branches: 80 },
+        "apps/web/src/components/NestedGroupsTable.tsx": { lines: 95, branches: 80 },
+        "apps/web/src/components/GroupsTableSection.tsx": { lines: 95, branches: 80 },
+        "apps/web/src/components/KeyBreakdownRows.tsx": { lines: 95, branches: 80 },
+        "apps/web/src/components/StackedCostTooltip.tsx": { lines: 95, branches: 95 },
+        "apps/web/src/components/SeriesControls.tsx": { lines: 95, branches: 95 },
+        "apps/web/src/components/GroupsControls.tsx": { lines: 95, branches: 95 },
+        "apps/web/src/components/GroupTotalsChart.tsx": { lines: 95, branches: 45 },
       },
     },
     projects: [
@@ -112,7 +132,13 @@ export default defineConfig({
         test: {
           name: "web",
           environment: "jsdom",
+          // Reuses one jsdom environment per worker (still one module registry
+          // per test file, so isolation between files is unaffected) instead of
+          // spinning up a fresh jsdom per file — jsdom creation was ~65% of
+          // this project's total test time.
+          pool: "vmThreads",
           include: ["apps/web/src/**/*.test.{ts,tsx}"],
+          setupFiles: ["./apps/web/src/testSetup.ts"],
         },
       },
     ],

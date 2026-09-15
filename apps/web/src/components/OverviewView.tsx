@@ -245,7 +245,12 @@ export function OverviewView({ from, to, projectCycles, filterQuery, onError }: 
         </div>
         <div>
           <h3>Product totals</h3>
-          <SortableTable columns={productColumns} rows={ov.productTotals} initialSort="costCents" />
+          <SortableTable
+            columns={productColumns}
+            rows={ov.productTotals}
+            rowKey={(r) => r.product}
+            initialSort="costCents"
+          />
         </div>
       </div>
     </div>

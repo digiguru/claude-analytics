@@ -11,11 +11,16 @@ export interface Column<T> {
 interface Props<T> {
   columns: Column<T>[];
   rows: T[];
+  /** A stable per-row identity for React's reconciliation — required rather
+   *  than falling back to the row's array index, which (on a re-sortable
+   *  table) causes React to reuse the wrong DOM node for a row that moved.
+   *  See #30 item 6. */
+  rowKey: (row: T) => string | number;
   initialSort?: string;
   initialDesc?: boolean;
 }
 
-export function SortableTable<T>({ columns, rows, initialSort, initialDesc = true }: Props<T>) {
+export function SortableTable<T>({ columns, rows, rowKey, initialSort, initialDesc = true }: Props<T>) {
   const [sortKey, setSortKey] = useState(initialSort ?? columns[0]?.key ?? "");
   const [desc, setDesc] = useState(initialDesc);
 
@@ -63,8 +68,8 @@ export function SortableTable<T>({ columns, rows, initialSort, initialDesc = tru
         </tr>
       </thead>
       <tbody>
-        {sorted.map((row, i) => (
-          <tr key={i}>
+        {sorted.map((row) => (
+          <tr key={rowKey(row)}>
             {columns.map((c) => (
               <td key={c.key} className={c.numeric ? "num" : ""}>
                 {c.render ? c.render(row) : c.value(row)}

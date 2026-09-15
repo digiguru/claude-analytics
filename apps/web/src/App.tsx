@@ -1,10 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { api, type Status } from "./api.js";
 import { ControlBar } from "./components/ControlBar.js";
 import { FilterMenu } from "./components/FilterMenu.js";
 import { OverviewView } from "./components/OverviewView.js";
-import { GroupsView } from "./components/GroupsView.js";
-import { MembersView } from "./components/MembersView.js";
 import { readParams, setParam, useUrlParam } from "./url.js";
 import {
   filterToQuery,
@@ -15,6 +13,15 @@ import {
   persistActiveFilter,
   type FilterSpec,
 } from "./filters.js";
+
+// Each tab's view (and everything it pulls in — recharts, its own chart
+// sub-components) loads only once that tab is actually visited, instead of
+// all three shipping in the initial bundle. Overview (imported above) stays
+// eager since it's the default tab on first load, so there's no extra
+// request before anything paints; Groups/Members split into their own
+// chunk each.
+const GroupsView = lazy(() => import("./components/GroupsView.js").then((m) => ({ default: m.GroupsView })));
+const MembersView = lazy(() => import("./components/MembersView.js").then((m) => ({ default: m.MembersView })));
 
 type Tab = "overview" | "groups" | "members";
 
@@ -138,24 +145,28 @@ export function App() {
         />
       )}
       {tab === "groups" && (
-        <GroupsView
-          from={from}
-          to={to}
-          dimensions={status?.dimensions ?? []}
-          timelineDimensions={status?.timelineDimensions ?? []}
-          projectCycles={status?.projectCycles ?? []}
-          filterQuery={filterQuery}
-          onError={setError}
-        />
+        <Suspense fallback={<div className="panel">Loading…</div>}>
+          <GroupsView
+            from={from}
+            to={to}
+            dimensions={status?.dimensions ?? []}
+            timelineDimensions={status?.timelineDimensions ?? []}
+            projectCycles={status?.projectCycles ?? []}
+            filterQuery={filterQuery}
+            onError={setError}
+          />
+        </Suspense>
       )}
       {tab === "members" && (
-        <MembersView
-          from={from}
-          to={to}
-          filter={filter}
-          projectCycles={status?.projectCycles ?? []}
-          onError={setError}
-        />
+        <Suspense fallback={<div className="panel">Loading…</div>}>
+          <MembersView
+            from={from}
+            to={to}
+            filter={filter}
+            projectCycles={status?.projectCycles ?? []}
+            onError={setError}
+          />
+        </Suspense>
       )}
     </div>
   );
