@@ -10,13 +10,8 @@ import {
   type ProjectCycles,
   type UserListEntry,
 } from "../api.js";
-import {
-  CHART_MARGIN,
-  RechartsReferenceArea as ReferenceArea,
-  Y_AXIS_WIDTH,
-  wrapLabel,
-  xAxisProps,
-} from "../charts.js";
+import { CHART_MARGIN, Y_AXIS_WIDTH, wrapLabel, xAxisProps } from "../charts.js";
+import { RechartsReferenceArea as ReferenceArea } from "../RechartsReferenceArea.js";
 import { snapBand } from "../cycles.js";
 import { prepareSeries, type Granularity } from "../series.js";
 import { CycleRail } from "./CycleRail.js";
@@ -56,7 +51,7 @@ export function MembersView({ from, to, filter, projectCycles, onError }: Props)
   const [search, setSearch] = useState("");
   const [selectedRaw, setSelected] = useUrlParam("member", "");
   const selected = selectedRaw || null;
-  const [detail, setDetail] = useState<MemberSummary | null>(null);
+  const [fetchedDetail, setFetchedDetail] = useState<MemberSummary | null>(null);
   const [granularity, setGranularity] = useState<Granularity>("day");
   const [showTrend, setShowTrend] = useState(false);
   const [showForecast, setShowForecast] = useState(false);
@@ -70,22 +65,25 @@ export function MembersView({ from, to, filter, projectCycles, onError }: Props)
 
   const loadDetail = useCallback((email: string) => setSelected(email), [setSelected]);
 
-  // Fetch whenever the selected member (incl. deep-link / back-forward) or date range changes.
+  // Fetch whenever the selected member (incl. deep-link / back-forward) or date
+  // range changes. No selection means nothing to fetch — `detail` below
+  // derives null from `selected` directly rather than this effect resetting
+  // fetchedDetail itself, so there's no synchronous setState at the top of
+  // the effect body.
   useEffect(() => {
-    if (!selected) {
-      setDetail(null);
-      return;
-    }
+    if (!selected) return;
     let cancelled = false;
     onError(null);
     api
       .member(selected, from || undefined, to || undefined)
-      .then((d) => !cancelled && setDetail(d))
+      .then((d) => !cancelled && setFetchedDetail(d))
       .catch((e) => !cancelled && onError(e instanceof Error ? e.message : String(e)));
     return () => {
       cancelled = true;
     };
   }, [selected, from, to, onError]);
+
+  const detail = selected ? fetchedDetail : null;
 
   const filtered = useMemo(
     () => users.filter((u) => u.email.includes(search.toLowerCase()) && userPasses(filter, u)),

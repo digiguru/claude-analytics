@@ -167,6 +167,11 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
   }, [dimension, product, effectiveFilterQuery, scopeValue, scopeDimension, secondary, from, to, onError]);
 
   useEffect(() => {
+    // The standard fetch-on-mount pattern (see react.dev's own data-fetching
+    // example): `load` resets `loading`/error state synchronously before its
+    // internal `await`, which this rule flags on any reachable setState call
+    // regardless of an async gap. Intentional, not a bug.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
 

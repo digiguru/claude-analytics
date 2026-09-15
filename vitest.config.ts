@@ -27,6 +27,7 @@ export default defineConfig({
         "**/*.d.ts",
         "packages/core/src/__fixtures__/**",
         "apps/server/src/__tests__/**",
+        "apps/cli/src/__tests__/**",
         "apps/web/src/main.tsx",
       ],
       reporter: ["text", "lcov"],
@@ -38,9 +39,12 @@ export default defineConfig({
       // fetch/sleep added for retry/backoff/timeout testing is what changed that);
       // Phase 4 (#36) adds apps/web's pure-logic modules; #29 (GroupsView
       // decomposition) adds the further extractions that came out of it
-      // (stack.ts, quickFilter.ts, groupColumns.ts, cycles.ts's resolveBucket).
-      // Later phases raise thresholds for the rest of packages/core, then
-      // apps/web's components (#38) and apps/cli (#37) in turn.
+      // (stack.ts, quickFilter.ts, groupColumns.ts, cycles.ts's resolveBucket);
+      // Phase 5 (#37) adds apps/cli's command modules and format helpers, after
+      // moving all command logic out of index.ts's `.action()` bodies (index.ts
+      // itself stays ungated commander wiring, like apps/server's index.ts).
+      // Later phases raise thresholds for the rest of packages/core and
+      // apps/web's components (#38).
       //
       // Note on #36's stated apps/web target (45% lines / 35% branches overall):
       // that's arithmetically unreachable while apps/web/src/components/** stays
@@ -66,6 +70,17 @@ export default defineConfig({
         "apps/web/src/stack.ts": { lines: 95, branches: 90 },
         "apps/web/src/quickFilter.ts": { lines: 95, branches: 90 },
         "apps/web/src/groupColumns.ts": { lines: 90, branches: 80 },
+        "apps/cli/src/format.ts": { lines: 90, branches: 90 },
+        "apps/cli/src/load.ts": { lines: 90, branches: 70 },
+        "apps/cli/src/commands/columns.ts": { lines: 95, branches: 85 },
+        "apps/cli/src/commands/export.ts": { lines: 95, branches: 70 },
+        "apps/cli/src/commands/group.ts": { lines: 95, branches: 60 },
+        "apps/cli/src/commands/groupBy.ts": { lines: 75, branches: 70 },
+        "apps/cli/src/commands/member.ts": { lines: 95, branches: 70 },
+        "apps/cli/src/commands/overview.ts": { lines: 95, branches: 90 },
+        "apps/cli/src/commands/projects.ts": { lines: 85, branches: 60 },
+        "apps/cli/src/commands/sync.ts": { lines: 80, branches: 70 },
+        "apps/cli/src/commands/top.ts": { lines: 95, branches: 85 },
       },
     },
     projects: [

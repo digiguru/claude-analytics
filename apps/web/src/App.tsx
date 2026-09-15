@@ -76,6 +76,11 @@ export function App() {
   }, [setFrom, setTo]);
 
   useEffect(() => {
+    // The standard fetch-on-mount pattern — `refreshStatus`'s setState calls
+    // only run after its internal `await`, but this rule flags any setState
+    // reachable from an effect regardless of an async gap. Intentional, not
+    // a bug.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void refreshStatus();
   }, [refreshStatus]);
 
