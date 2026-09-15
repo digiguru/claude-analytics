@@ -86,7 +86,7 @@ export function MembersView({ from, to, filter, projectCycles, onError }: Props)
   const detail = selected ? fetchedDetail : null;
 
   const filtered = useMemo(
-    () => users.filter((u) => u.email.includes(search.toLowerCase()) && userPasses(filter, u)),
+    () => users.filter((u) => u.email.toLowerCase().includes(search.toLowerCase()) && userPasses(filter, u)),
     [users, search, filter],
   );
   const series = useMemo(
