@@ -138,7 +138,7 @@ export function OverviewView({ from, to, projectCycles, filterQuery, onError }: 
             <XAxis dataKey="date" stroke="#9aa3b2" fontSize={11} {...xAxisProps(chartData.length, 10, { rotateWhenShort: true })} />
             <YAxis yAxisId="l" stroke="#d97757" fontSize={11} width={Y_AXIS_WIDTH} />
             <YAxis yAxisId="r" orientation="right" stroke="#5a6b8c" fontSize={11} width={Y_AXIS_WIDTH} />
-            <Tooltip contentStyle={{ background: "#1a1d24", border: "1px solid #2a2f3a" }} formatter={(v: number, n) => (typeof n === "string" && n.startsWith("cost") ? `$${Number(v).toFixed(2)}` : v)} />
+            <Tooltip contentStyle={{ background: "#1a1d24", border: "1px solid #2a2f3a" }} formatter={(v, n) => (typeof n === "string" && n.startsWith("cost") ? `$${Number(v ?? 0).toFixed(2)}` : Number(v ?? 0))} />
             <Legend />
             <Bar yAxisId="l" dataKey="cost" name="cost ($)" fill="#d97757" />
             {showForecast && <Bar yAxisId="l" dataKey="costForecast" name="cost (forecast)" fill="#d97757" fillOpacity={0.35} />}
@@ -167,7 +167,7 @@ export function OverviewView({ from, to, projectCycles, filterQuery, onError }: 
                 <CartesianGrid strokeDasharray="3 3" stroke="#2a2f3a" />
                 <XAxis type="number" stroke="#9aa3b2" fontSize={11} />
                 <YAxis type="category" dataKey="name" width={100} stroke="#9aa3b2" fontSize={11} />
-                <Tooltip contentStyle={{ background: "#1a1d24", border: "1px solid #2a2f3a" }} formatter={(v: number) => `$${v.toFixed(2)}`} />
+                <Tooltip contentStyle={{ background: "#1a1d24", border: "1px solid #2a2f3a" }} formatter={(v) => `$${Number(v ?? 0).toFixed(2)}`} />
                 <Bar dataKey="cost" name="cost ($)">
                   {ov.productTotals.map((_, i) => (
                     <Cell key={i} fill={COLORS[i % COLORS.length]} />

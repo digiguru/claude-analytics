@@ -5,7 +5,6 @@ import {
   CartesianGrid,
   LabelList,
   Legend,
-  ReferenceArea,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -27,7 +26,15 @@ import {
   type TimelineDimension,
   type UserListEntry,
 } from "../api.js";
-import { CHART_MARGIN, COLORS, NEUTRAL_COLOR, Y_AXIS_WIDTH, wrapLabel, xAxisProps } from "../charts.js";
+import {
+  CHART_MARGIN,
+  COLORS,
+  NEUTRAL_COLOR,
+  RechartsReferenceArea as ReferenceArea,
+  Y_AXIS_WIDTH,
+  wrapLabel,
+  xAxisProps,
+} from "../charts.js";
 import { bucketByCycle, snapBand, type ChartBucket } from "../cycles.js";
 import { bucketSeries, type Granularity } from "../series.js";
 import { useUrlParam } from "../url.js";
@@ -484,12 +491,13 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
     return { total, byKey };
   }, [stacked.rows, stacked.keys]);
 
-  const handleChartMouseDown = (e: { activeLabel?: string }, event: { shiftKey?: boolean }) => {
+  const handleChartMouseDown = (e: { activeLabel?: string | number }, event: { shiftKey?: boolean }) => {
     if (e?.activeLabel == null) return;
-    setActiveDrag({ start: e.activeLabel, end: e.activeLabel, add: Boolean(event?.shiftKey) });
+    const label = String(e.activeLabel);
+    setActiveDrag({ start: label, end: label, add: Boolean(event?.shiftKey) });
   };
-  const handleChartMouseMove = (e: { activeLabel?: string }) => {
-    if (activeDrag && e?.activeLabel != null) setActiveDrag({ ...activeDrag, end: e.activeLabel });
+  const handleChartMouseMove = (e: { activeLabel?: string | number }) => {
+    if (activeDrag && e?.activeLabel != null) setActiveDrag({ ...activeDrag, end: String(e.activeLabel) });
   };
   const commitDrag = () => {
     setActiveDrag((cur) => {
@@ -673,7 +681,7 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
                           key={c.name}
                           x1={span.x1}
                           x2={span.x2}
-                          isFront={false}
+                          zIndex={0}
                           fill="#ffffff"
                           fillOpacity={i % 2 ? 0.07 : 0.04}
                           stroke="#2a2f3a"
@@ -699,7 +707,7 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
                       key={`${r.x1}-${r.x2}-${i}`}
                       x1={r.x1}
                       x2={r.x2}
-                      isFront
+                      zIndex={1}
                       stroke="#d97757"
                       strokeOpacity={0.6}
                       fill="#d97757"
@@ -815,7 +823,10 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
                 <YAxis stroke="#9aa3b2" fontSize={12} />
                 <Tooltip
                   contentStyle={{ background: "#1a1d24", border: "1px solid #2a2f3a" }}
-                  formatter={(v: number) => (metric.money ? usd(v) : metric.key === "totalTokens" ? tokens(v) : v)}
+                  formatter={(v) => {
+                    const n = Number(v ?? 0);
+                    return metric.money ? usd(n) : metric.key === "totalTokens" ? tokens(n) : n;
+                  }}
                 />
                 <Bar dataKey="value" fill="#d97757" name={metric.label}>
                   <LabelList
@@ -823,7 +834,10 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
                     position="top"
                     fill="#9aa3b2"
                     fontSize={11}
-                    formatter={(v: number) => (metric.money ? usd(v) : metric.key === "totalTokens" ? tokens(v) : v)}
+                    formatter={(v) => {
+                      const n = Number(v ?? 0);
+                      return metric.money ? usd(n) : metric.key === "totalTokens" ? tokens(n) : n;
+                    }}
                   />
                 </Bar>
               </BarChart>
