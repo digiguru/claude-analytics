@@ -24,6 +24,11 @@ test("the app mounts, shows real overview numbers, and Groups renders a chart", 
   await expect(statGrid).toContainText("$");
   await expect(statGrid).not.toContainText("NaN");
 
+  // Overview's charts are lazy-loaded (recharts is ~60% of the build and is
+  // kept off the initial chunk), so this also proves that dynamic import
+  // resolves — the stat grid above renders without it and would pass alone.
+  await expect(page.locator(".recharts-surface").first()).toBeVisible();
+
   await page.getByRole("button", { name: "Groups & products" }).click();
   await expect(page.locator(".recharts-surface").first()).toBeVisible();
 
