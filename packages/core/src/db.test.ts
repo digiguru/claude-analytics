@@ -28,6 +28,15 @@ test("getUserDays: includeRaw: true reconstitutes the original per-day record", 
   db.close();
 });
 
+test("upsertUserDays: a row with no `raw` at all (now optional) doesn't violate raw_json's NOT NULL column", () => {
+  const db = freshDb();
+  const { raw: _raw, ...withoutRaw } = userDayRow({ chatMessages: 3 });
+  expect(() => db.upsertUserDays([withoutRaw])).not.toThrow();
+  const [row] = db.getUserDays({ includeRaw: true });
+  expect(row!.raw).toBe(null);
+  db.close();
+});
+
 test("upsertOrgProducts / getOrgProducts: round-trips cacheReadTokens", () => {
   const db = freshDb();
   db.upsertOrgProducts([orgProductRow({ cacheReadTokens: 42, totalTokens: 100 })]);
