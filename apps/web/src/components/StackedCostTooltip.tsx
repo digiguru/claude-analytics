@@ -36,11 +36,11 @@ export function StackedCostTooltip({
           <span className="muted" style={{ flex: 1 }}>
             {p.name}
           </span>
-          <span>{usd((Number(p.value) || 0) * 100)}</span>
+          <span>{usd(Number(p.value) || 0)}</span>
         </div>
       ))}
       <div style={{ marginTop: 4, paddingTop: 4, borderTop: "1px solid #2a2f3a" }}>
-        Total: <strong>{usd(total * 100)}</strong>
+        Total: <strong>{usd(total)}</strong>
       </div>
     </div>
   );

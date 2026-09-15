@@ -303,6 +303,6 @@ export const api = {
     `/api/export/members-long${qs({ from, to, filter })}`,
 };
 
-export const usd = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+export const usd = (cents: number) => (Number.isFinite(cents) ? `$${(cents / 100).toFixed(2)}` : "–");
 export const tokens = (n: number) =>
-  n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n);
+  !Number.isFinite(n) ? "–" : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 1e3).toFixed(1)}k` : String(n);

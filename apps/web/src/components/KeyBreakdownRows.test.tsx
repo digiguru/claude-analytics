@@ -15,8 +15,8 @@ test("KeyBreakdownRows: renders one row per key present in byKey, in $ cents-to-
       keys={["Alpha", "Beta", "Gamma"]}
       byKey={
         new Map([
-          ["Alpha", 10],
-          ["Beta", 5],
+          ["Alpha", 1000],
+          ["Beta", 500],
         ])
       }
       colors={

@@ -14,6 +14,17 @@ test("tokens: abbreviates millions/thousands, leaves small numbers as-is", () =>
   expect(tokens(500)).toBe("500");
 });
 
+test("usd: non-finite input renders a placeholder instead of $NaN", () => {
+  expect(usd(NaN)).toBe("–");
+  expect(usd(Infinity)).toBe("–");
+  expect(usd(-Infinity)).toBe("–");
+});
+
+test("tokens: non-finite input renders a placeholder instead of NaN", () => {
+  expect(tokens(NaN)).toBe("–");
+  expect(tokens(Infinity)).toBe("–");
+});
+
 // ---- pure URL builders (no network involved) ----
 
 test("exportUrl: builds a query string from the given fields, omitting undefined ones", () => {

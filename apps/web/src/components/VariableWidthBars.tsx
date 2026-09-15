@@ -46,7 +46,7 @@ export function VariableWidthBars({ rows, keys, colors, height = 260 }: Props) {
             .reverse()
             .map((v) => (
               <span key={v} className="varwidth-ytick">
-                {usd(v * 100)}
+                {usd(v)}
               </span>
             ))}
         </div>
@@ -80,7 +80,7 @@ export function VariableWidthBars({ rows, keys, colors, height = 260 }: Props) {
                           <div className="varwidth-tooltip">
                             <div>{String(row.date)}</div>
                             <div className="muted">
-                              {k}: {usd(v * 100)}
+                              {k}: {usd(v)}
                             </div>
                             <div className="muted">
                               {row.start} – {row.end} ({days} day{days === 1 ? "" : "s"})
