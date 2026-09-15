@@ -48,11 +48,11 @@ interface Bucket {
  * "(no cycle N)"), so the existing `<XAxis dataKey="date">` needs no change —
  * each label is unique, which a category axis and ReferenceArea both require.
  *
- * Each row also carries `days`: the bucket's real calendar span (its cycle's
- * own start/end, not a count of days that happened to have cost) — cycles are
- * rarely equal length, so a chart wanting bar *width* proportional to duration
- * needs this rather than assuming every bucket is the same size (see
- * VariableWidthBars, used for the "Cycle" granularity chart).
+ * Each row also carries `days` (the bucket's real calendar span — its cycle's
+ * own start/end, not a count of days that happened to have cost — needed for
+ * a bar *width* proportional to duration, since cycles are rarely equal
+ * length) and `start`/`end` (the same window, for tooltips) — see
+ * VariableWidthBars, used for the "Cycle" granularity chart.
  */
 export function bucketByCycle(daily: Row[], cycles: CycleDef[]): Row[] {
   const dates = daily.map((r) => String(r.date));
@@ -98,7 +98,7 @@ export function bucketByCycle(daily: Row[], cycles: CycleDef[]): Row[] {
 
   return buckets
     .filter((b) => b.n > 0)
-    .map((b) => ({ date: b.label, days: daysInclusive(b.start, b.end), ...b.sums }));
+    .map((b) => ({ date: b.label, days: daysInclusive(b.start, b.end), start: b.start, end: b.end, ...b.sums }));
 }
 
 /**

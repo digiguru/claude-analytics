@@ -82,7 +82,9 @@ export function VariableWidthBars({ rows, keys, colors, height = 260 }: Props) {
                             <div className="muted">
                               {k}: {usd(v * 100)}
                             </div>
-                            <div className="muted">{days} day{days === 1 ? "" : "s"}</div>
+                            <div className="muted">
+                              {row.start} – {row.end} ({days} day{days === 1 ? "" : "s"})
+                            </div>
                           </div>
                         )}
                       </div>
