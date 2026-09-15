@@ -8,41 +8,70 @@ import type { CycleDef } from "./api.js";
 
 export type ChartBucket = Granularity | "cycle";
 
-/** Bucket label for time inside a project but outside every one of its cycles. */
-export const NO_CYCLE_LABEL = "(no cycle)";
+/** Label prefix for time inside a project but outside every one of its cycles —
+ *  each gap gets its own numbered label (e.g. "(no cycle 1)"), never a shared one. */
+export const NO_CYCLE_LABEL = "no cycle";
 
 type Row = Record<string, number | string>;
 
+/** One bucket-to-be: a label, a predicate over a raw "YYYY-MM-DD" date string,
+ *  and its running sums (numeric fields only). */
+interface Bucket {
+  label: string;
+  matches: (date: string) => boolean;
+  sums: Record<string, number>;
+  n: number;
+}
+
 /**
  * Collapse daily rows into one row per cycle (chronological, `cycles` order),
- * plus a single trailing "(no cycle)" bucket for any days that fell outside
- * every cycle — emitted only when it actually has cost, so the bars still sum
- * to the project's true total without an always-there empty bar. Mirrors
- * bucketSeries' "sum every numeric key" contract; `date` on each row is the
- * cycle's display name (so the existing `<XAxis dataKey="date">` needs no change).
+ * with a separate, numbered "(no cycle N)" bucket for each stretch of time that
+ * falls outside every cycle — before the first, between any two, and after the
+ * last if it has a real end date. Each sits in its correct chronological slot
+ * (not merged into one trailing bucket), so e.g. a 6-day gap between two
+ * cycles gets its own bar between them. A bucket is only emitted when it
+ * actually has cost, so the bars still sum to the project's true total without
+ * always-there empty ones. Mirrors bucketSeries' "sum every numeric key"
+ * contract; `date` on each row is the bucket's display label (cycle name, or
+ * "(no cycle N)"), so the existing `<XAxis dataKey="date">` needs no change —
+ * each label is unique, which a category axis and ReferenceArea both require.
  */
 export function bucketByCycle(daily: Row[], cycles: CycleDef[]): Row[] {
-  const buckets = cycles.map((c) => ({ label: c.name, sums: {} as Record<string, number>, n: 0 }));
-  const noCycle = { label: NO_CYCLE_LABEL, sums: {} as Record<string, number>, n: 0 };
+  const slots: Pick<Bucket, "label" | "matches">[] = [];
+  let gapNumber = 0;
+  const addGap = (after: string | null, before: string | null) => {
+    gapNumber += 1;
+    slots.push({
+      label: `(${NO_CYCLE_LABEL} ${gapNumber})`, // "(no cycle 1)", "(no cycle 2)", ...
+      matches: (date) => (after === null || date > after) && (before === null || date < before),
+    });
+  };
 
+  if (cycles.length === 0) {
+    addGap(null, null); // defensive: shouldn't be called with no cycles, but never lose data
+  } else {
+    cycles.forEach((c, i) => {
+      const prev = cycles[i - 1];
+      addGap(prev ? prev.end : null, c.start); // before this cycle (or before the first)
+      slots.push({ label: c.name, matches: (date) => c.start <= date && (c.end === null || date <= c.end) });
+    });
+    const last = cycles[cycles.length - 1]!;
+    if (last.end !== null) addGap(last.end, null); // after the last cycle, only if it actually ended
+  }
+
+  const buckets: Bucket[] = slots.map((s) => ({ ...s, sums: {}, n: 0 }));
   for (const row of daily) {
     const date = String(row.date);
-    const bucket = buckets.find((_, i) => {
-      const c = cycles[i]!;
-      return c.start <= date && (c.end === null || date <= c.end);
-    });
-    const target = bucket ?? noCycle;
-    target.n += 1;
+    const bucket = buckets.find((b) => b.matches(date));
+    if (!bucket) continue; // shouldn't happen — slots cover every date — but never throw over a chart
+    bucket.n += 1;
     for (const [k, v] of Object.entries(row)) {
       if (k === "date" || typeof v !== "number") continue;
-      target.sums[k] = (target.sums[k] ?? 0) + v;
+      bucket.sums[k] = (bucket.sums[k] ?? 0) + v;
     }
   }
 
-  const out: Row[] = [];
-  for (const b of buckets) if (b.n > 0) out.push({ date: b.label, ...b.sums });
-  if (noCycle.n > 0) out.push({ date: noCycle.label, ...noCycle.sums });
-  return out;
+  return buckets.filter((b) => b.n > 0).map((b) => ({ date: b.label, ...b.sums }));
 }
 
 /**
