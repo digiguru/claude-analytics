@@ -1,13 +1,7 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type {
-  OrgProductRow,
-  OrgSummaryRow,
-  UserActivityRecord,
-  UserDayRow,
-  UserProductRow,
-} from "./types.js";
+import type { OrgProductRow, OrgSummaryRow, UserActivityRecord, UserDayRow, UserProductRow } from "./types.js";
 
 /**
  * Local SQLite cache of Claude Enterprise analytics:
@@ -148,14 +142,23 @@ export class MetricsDb {
   private dateClause(from?: string, to?: string): { where: string; params: Record<string, string> } {
     const clauses: string[] = [];
     const params: Record<string, string> = {};
-    if (from) (clauses.push("date >= @from"), (params.from = from));
-    if (to) (clauses.push("date <= @to"), (params.to = to));
+    if (from) {
+      clauses.push("date >= @from");
+      params.from = from;
+    }
+    if (to) {
+      clauses.push("date <= @to");
+      params.to = to;
+    }
     return { where: clauses.length ? `WHERE ${clauses.join(" AND ")}` : "", params };
   }
 
   getSummaries(from?: string, to?: string): OrgSummaryRow[] {
     const { where, params } = this.dateClause(from, to);
-    const rows = this.db.prepare(`SELECT * FROM org_summary ${where} ORDER BY date`).all(params) as Record<string, number | string>[];
+    const rows = this.db.prepare(`SELECT * FROM org_summary ${where} ORDER BY date`).all(params) as Record<
+      string,
+      number | string
+    >[];
     return rows.map((r) => ({
       date: r.date as string,
       assignedSeats: r.assigned_seats as number,
@@ -172,7 +175,10 @@ export class MetricsDb {
 
   getOrgProducts(from?: string, to?: string): OrgProductRow[] {
     const { where, params } = this.dateClause(from, to);
-    const rows = this.db.prepare(`SELECT * FROM org_product ${where} ORDER BY date`).all(params) as Record<string, number | string>[];
+    const rows = this.db.prepare(`SELECT * FROM org_product ${where} ORDER BY date`).all(params) as Record<
+      string,
+      number | string
+    >[];
     return rows.map((r) => ({
       date: r.date as string,
       product: r.product as string,

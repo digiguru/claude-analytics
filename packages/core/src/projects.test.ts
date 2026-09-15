@@ -61,7 +61,9 @@ projects:
   const { cycles, warnings } = parseProjectsYaml(yaml);
   const a = cyclesFor(cycles, "P").find((c) => c.name === "A")!;
   expect(a.end).toBe("2026-01-31"); // day before B's 2026-02-01 start
-  expect(warnings.some((w) => w.includes("overlaps the next cycle") && w.includes("truncated to 2026-01-31"))).toBe(true);
+  expect(warnings.some((w) => w.includes("overlaps the next cycle") && w.includes("truncated to 2026-01-31"))).toBe(
+    true,
+  );
 });
 
 test("duplicate cycle names within a project are disambiguated", () => {
@@ -142,7 +144,15 @@ projects:
 // ---- parseProjectCycles, extracted from parseProjectsYaml (#28) ----
 
 function membership(overrides: Partial<Membership> = {}): Membership {
-  return { project: "P", team: NONE_KEY, client: NONE_KEY, start: "2026-01-01", end: null, allocation: 1, ...overrides };
+  return {
+    project: "P",
+    team: NONE_KEY,
+    client: NONE_KEY,
+    start: "2026-01-01",
+    end: null,
+    allocation: 1,
+    ...overrides,
+  };
 }
 
 test("parseProjectCycles: no cycles declared returns an empty list with no warnings", () => {
@@ -172,7 +182,12 @@ test("parseProjectCycles: a malformed entry (not an object, missing name, missin
 
 test("parseProjectCycles: an end before start is skipped with a warning", () => {
   const warnings: string[] = [];
-  const cycles = parseProjectCycles("P", [{ name: "Bad", start: "2026-02-01", end: "2026-01-01" }], [membership()], warnings);
+  const cycles = parseProjectCycles(
+    "P",
+    [{ name: "Bad", start: "2026-02-01", end: "2026-01-01" }],
+    [membership()],
+    warnings,
+  );
   expect(cycles).toEqual([]);
   expect(warnings.some((w) => w.includes('"end" (2026-01-01) is before "start" (2026-02-01)'))).toBe(true);
 });

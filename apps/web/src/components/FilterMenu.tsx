@@ -37,10 +37,16 @@ export function FilterMenu({ dimensions, timelineDimensions, csvLoaded, from, to
   // each person's timeline group membership over the current range) is the
   // source for every facet's values.
   useEffect(() => {
-    api.users(from || undefined, to || undefined).then((r) => setUsers(r.users)).catch(() => setUsers([]));
+    api
+      .users(from || undefined, to || undefined)
+      .then((r) => setUsers(r.users))
+      .catch(() => setUsers([]));
   }, [csvLoaded, from, to]);
 
-  const facets = useMemo(() => buildFacets(users, dimensions, timelineDimensions), [users, dimensions, timelineDimensions]);
+  const facets = useMemo(
+    () => buildFacets(users, dimensions, timelineDimensions),
+    [users, dimensions, timelineDimensions],
+  );
 
   // Close on outside click.
   useEffect(() => {
@@ -89,7 +95,11 @@ export function FilterMenu({ dimensions, timelineDimensions, csvLoaded, from, to
 
           <div className="filter-saved">
             <label>Saved filter sets</label>
-            {saved.length === 0 && <p className="muted" style={{ margin: "2px 0 8px" }}>None saved yet.</p>}
+            {saved.length === 0 && (
+              <p className="muted" style={{ margin: "2px 0 8px" }}>
+                None saved yet.
+              </p>
+            )}
             {saved.map((f) => {
               const active = filterToQuery(f.spec) === filterToQuery(filter);
               return (
@@ -172,7 +182,9 @@ function FacetGroup({
   return (
     <div className="facet">
       <button type="button" className="facet-head" onClick={onToggleExpand}>
-        <span>{expanded ? "▾" : "▸"} {facet.label}</span>
+        <span>
+          {expanded ? "▾" : "▸"} {facet.label}
+        </span>
         <span className="muted">
           {shownCount}/{facet.values.length}
         </span>
@@ -180,10 +192,18 @@ function FacetGroup({
       {expanded && (
         <div className="facet-body">
           <div className="facet-actions">
-            <button type="button" className="link" onClick={() => onChange(setFacetAll(spec, facet.key, facet.values, false))}>
+            <button
+              type="button"
+              className="link"
+              onClick={() => onChange(setFacetAll(spec, facet.key, facet.values, false))}
+            >
               Select all
             </button>
-            <button type="button" className="link" onClick={() => onChange(setFacetAll(spec, facet.key, facet.values, true))}>
+            <button
+              type="button"
+              className="link"
+              onClick={() => onChange(setFacetAll(spec, facet.key, facet.values, true))}
+            >
               Select none
             </button>
           </div>
@@ -201,7 +221,11 @@ function FacetGroup({
                 <span>{v}</span>
               </label>
             ))}
-            {visible.length === 0 && <p className="muted" style={{ margin: 4 }}>No matches.</p>}
+            {visible.length === 0 && (
+              <p className="muted" style={{ margin: 4 }}>
+                No matches.
+              </p>
+            )}
           </div>
         </div>
       )}

@@ -21,11 +21,7 @@ export function SeriesControls({ granularity, onGranularity, showTrend, onTrend,
     <div className="series-controls">
       <div className="segmented" role="group" aria-label="Group by">
         {GRANULARITIES.map((g) => (
-          <button
-            key={g.key}
-            className={granularity === g.key ? "active" : ""}
-            onClick={() => onGranularity(g.key)}
-          >
+          <button key={g.key} className={granularity === g.key ? "active" : ""} onClick={() => onGranularity(g.key)}>
             {g.label}
           </button>
         ))}

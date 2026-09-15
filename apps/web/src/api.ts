@@ -230,7 +230,9 @@ export const api = {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ from, to }),
-    }).then(json<{ ok: boolean; summaryDays: number; activityDays: number; userProductRows: number; orgProductRows: number }>),
+    }).then(
+      json<{ ok: boolean; summaryDays: number; activityDays: number; userProductRows: number; orgProductRows: number }>,
+    ),
   overview: (from?: string, to?: string, filter?: string) =>
     fetch(`/api/overview${qs({ from, to, filter })}`).then(json<Overview>),
   groups: (q: GroupsQuery) =>
@@ -281,8 +283,7 @@ export const api = {
       scope: q.scope,
       scopeDimension: q.scopeDimension,
     })}`,
-  exportMembersUrl: (from?: string, to?: string, filter?: string) =>
-    `/api/export/members${qs({ from, to, filter })}`,
+  exportMembersUrl: (from?: string, to?: string, filter?: string) => `/api/export/members${qs({ from, to, filter })}`,
   exportMembersLongUrl: (from?: string, to?: string, filter?: string) =>
     `/api/export/members-long${qs({ from, to, filter })}`,
 };

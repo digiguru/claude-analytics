@@ -74,6 +74,10 @@ Then, in the UI:
 
 That's it — you're running locally. For a production-style single process instead of the dev servers, use `npm run build && npm start`.
 
+### Linting and formatting
+
+`npm run lint` (ESLint, flat config in `eslint.config.js`) and `npm run format:check` (Prettier); `npm run lint:fix` / `npm run format` to apply fixes. Both run in CI. Note: `typescript-eslint` doesn't yet support TypeScript 7, so the root `typescript` devDependency is aliased to a TS 6 compatibility shim (`@typescript/typescript6`) purely for the linter's own module resolution — every workspace's actual build and `tsc`/`vite build` still run on real TypeScript 7 via the separately-aliased `@typescript/native` devDependency (`node_modules/.bin/tsc`). Nothing in application code imports the `typescript` package directly, so this only affects tooling.
+
 ---
 
 ## What it talks to

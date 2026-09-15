@@ -100,11 +100,7 @@ export function membersDailyCost(
  * Wide CSV: email, CSV attribute columns, one cost column per day (dollars),
  * then the period totals.
  */
-export function membersDailyToCsv(
-  rows: MemberDailyRow[],
-  dates: string[],
-  attributeColumns: string[],
-): string {
+export function membersDailyToCsv(rows: MemberDailyRow[], dates: string[], attributeColumns: string[]): string {
   const out = rows.map((r) => {
     const row: Record<string, string | number> = { email: r.email };
     for (const col of attributeColumns) row[col] = r.attributes?.[col] ?? "";

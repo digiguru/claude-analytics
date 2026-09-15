@@ -31,10 +31,7 @@ function writeParams(params: URLSearchParams, replace: boolean): void {
 }
 
 /** Bind a single string param to component state. Reflects back/forward navigation. */
-export function useUrlParam(
-  key: string,
-  fallback = "",
-): [string, (value: string | null, replace?: boolean) => void] {
+export function useUrlParam(key: string, fallback = ""): [string, (value: string | null, replace?: boolean) => void] {
   const [value, setValue] = useState(() => readParams().get(key) ?? fallback);
 
   useEffect(() => {
@@ -48,10 +45,7 @@ export function useUrlParam(
     };
   }, [key, fallback]);
 
-  const set = useCallback(
-    (v: string | null, replace = false) => setParam(key, v, replace),
-    [key],
-  );
+  const set = useCallback((v: string | null, replace = false) => setParam(key, v, replace), [key]);
   return [value, set];
 }
 

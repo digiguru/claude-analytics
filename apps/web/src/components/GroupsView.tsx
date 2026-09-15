@@ -1,15 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  LabelList,
-  Legend,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { Bar, BarChart, CartesianGrid, LabelList, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import {
   api,
   CYCLE_DIMENSION_ID,
@@ -118,7 +108,11 @@ function useStackedSeries(
     const daily = [...byDate.values()].sort((a, b) => String(a.date).localeCompare(String(b.date)));
     const bucketed = bucket === "cycle" ? bucketByCycle(daily, cycles) : bucketSeries(daily, bucket, {});
 
-    const outKeys = [...rankedKeys.filter((k) => top.has(k)), ...(hasOther ? [OTHER_KEY] : []), ...(hasUnassigned ? [UNASSIGNED_KEY] : [])];
+    const outKeys = [
+      ...rankedKeys.filter((k) => top.has(k)),
+      ...(hasOther ? [OTHER_KEY] : []),
+      ...(hasUnassigned ? [UNASSIGNED_KEY] : []),
+    ];
     return { rows: bucketed, keys: outKeys };
   }, [timeseries, keys, bucket, cycles]);
 }
@@ -137,14 +131,25 @@ function StackedCostTooltip({
   if (!active || !payload || payload.length === 0) return null;
   const total = payload.reduce((sum, p) => sum + (Number(p.value) || 0), 0);
   return (
-    <div style={{ background: "#1a1d24", border: "1px solid #2a2f3a", borderRadius: 6, padding: "8px 10px", fontSize: 12, lineHeight: 1.5 }}>
+    <div
+      style={{
+        background: "#1a1d24",
+        border: "1px solid #2a2f3a",
+        borderRadius: 6,
+        padding: "8px 10px",
+        fontSize: 12,
+        lineHeight: 1.5,
+      }}
+    >
       <div style={{ marginBottom: 4 }}>
         <strong>{label}</strong>
       </div>
       {payload.map((p) => (
         <div key={p.dataKey} className="row" style={{ gap: 6, alignItems: "center" }}>
           <span style={{ width: 8, height: 8, borderRadius: 2, background: p.color, display: "inline-block" }} />
-          <span className="muted" style={{ flex: 1 }}>{p.name}</span>
+          <span className="muted" style={{ flex: 1 }}>
+            {p.name}
+          </span>
           <span>{usd((Number(p.value) || 0) * 100)}</span>
         </div>
       ))}
@@ -175,7 +180,10 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
 
   // The member list (for CSV facet values) — same source the Filter menu uses.
   useEffect(() => {
-    api.users().then((r) => setUsers(r.users)).catch(() => setUsers([]));
+    api
+      .users()
+      .then((r) => setUsers(r.users))
+      .catch(() => setUsers([]));
   }, []);
 
   // Every facet "Quick filter by" can narrow to a single value of: the timeline
@@ -308,7 +316,12 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
     else if (dimensions.length) setDimension(dimensions[0]!, true);
   }, [dimensions, timelineDimensions, dimension, cycleAvailable, setDimension]);
 
-  const bucket: ChartBucket = bucketRaw === "cycle" && cycleAvailable ? "cycle" : bucketRaw === "day" || bucketRaw === "month" ? bucketRaw : "week";
+  const bucket: ChartBucket =
+    bucketRaw === "cycle" && cycleAvailable
+      ? "cycle"
+      : bucketRaw === "day" || bucketRaw === "month"
+        ? bucketRaw
+        : "week";
 
   // Order groups for the chart (and the table's default) by the selected metric,
   // alphabetically, or — only offered when Stacking by is Cycle — chronologically
@@ -334,16 +347,40 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
       {
         key: "key",
         label: "Group",
-        value: (r) => (dimension === CYCLE_DIMENSION_ID ? cycleOrder.get(r.key) ?? Number.MAX_SAFE_INTEGER : r.key),
+        value: (r) => (dimension === CYCLE_DIMENSION_ID ? (cycleOrder.get(r.key) ?? Number.MAX_SAFE_INTEGER) : r.key),
         render: (r) => r.key,
       },
       { key: "seats", label: "Seats", numeric: true, value: (r) => r.seats },
       { key: "activeUsers", label: "Active users", numeric: true, value: (r) => r.activeUsers },
-      { key: "activeUserDays", label: "Active days", numeric: true, value: (r) => r.activeUserDays, render: (r) => r.activeUserDays.toFixed(1) },
+      {
+        key: "activeUserDays",
+        label: "Active days",
+        numeric: true,
+        value: (r) => r.activeUserDays,
+        render: (r) => r.activeUserDays.toFixed(1),
+      },
       { key: "costCents", label: "Cost", numeric: true, value: (r) => r.costCents, render: (r) => usd(r.costCents) },
-      { key: "avgCostPerSeat", label: "$/seat", numeric: true, value: (r) => r.avgCostPerSeat, render: (r) => usd(r.avgCostPerSeat) },
-      { key: "avgCostPerActiveUser", label: "$/active user", numeric: true, value: (r) => r.avgCostPerActiveUser, render: (r) => usd(r.avgCostPerActiveUser) },
-      { key: "totalTokens", label: "Tokens", numeric: true, value: (r) => r.totalTokens, render: (r) => tokens(r.totalTokens) },
+      {
+        key: "avgCostPerSeat",
+        label: "$/seat",
+        numeric: true,
+        value: (r) => r.avgCostPerSeat,
+        render: (r) => usd(r.avgCostPerSeat),
+      },
+      {
+        key: "avgCostPerActiveUser",
+        label: "$/active user",
+        numeric: true,
+        value: (r) => r.avgCostPerActiveUser,
+        render: (r) => usd(r.avgCostPerActiveUser),
+      },
+      {
+        key: "totalTokens",
+        label: "Tokens",
+        numeric: true,
+        value: (r) => r.totalTokens,
+        render: (r) => tokens(r.totalTokens),
+      },
       { key: "chatMessages", label: "Chat", numeric: true, value: (r) => r.chatMessages },
       { key: "ccSessions", label: "CC sessions", numeric: true, value: (r) => r.ccSessions },
       { key: "ccLocAdded", label: "CC loc+", numeric: true, value: (r) => r.ccLocAdded },
@@ -448,7 +485,11 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
         }
       }
     }
-    return ranges.map((r) => ({ x1: chartLabels[r.lo]!, x2: chartLabels[r.hi]!, rows: stacked.rows.slice(r.lo, r.hi + 1) }));
+    return ranges.map((r) => ({
+      x1: chartLabels[r.lo]!,
+      x2: chartLabels[r.hi]!,
+      rows: stacked.rows.slice(r.lo, r.hi + 1),
+    }));
   }, [regions, activeDrag, chartLabels, stacked.rows, toIndexRange, clipAroundAnchor]);
 
   const regionSummaries = useMemo(
@@ -538,7 +579,9 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
             {timelineDimensions.length > 0 && (
               <optgroup label="Timeline">
                 {timelineDimensions.map((d) => (
-                  <option key={d.id} value={d.id}>{d.label}</option>
+                  <option key={d.id} value={d.id}>
+                    {d.label}
+                  </option>
                 ))}
                 {cycleAvailable && <option value={CYCLE_DIMENSION_ID}>{CYCLE_DIMENSION_LABEL}</option>}
               </optgroup>
@@ -546,7 +589,9 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
             {dimensions.length > 0 && (
               <optgroup label="CSV columns">
                 {dimensions.map((d) => (
-                  <option key={d} value={d}>{d}</option>
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
                 ))}
               </optgroup>
             )}
@@ -560,7 +605,9 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
               {quickFilterFacets.map((f) => (
                 <optgroup label={f.label} key={f.id}>
                   {f.values.map((v) => (
-                    <option key={`${f.id}::${v}`} value={`${f.id}::${v}`}>{v}</option>
+                    <option key={`${f.id}::${v}`} value={`${f.id}::${v}`}>
+                      {v}
+                    </option>
                   ))}
                 </optgroup>
               ))}
@@ -572,15 +619,41 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
           <select value={product} onChange={(e) => setProduct(e.target.value)}>
             <option value="">All products</option>
             {PRODUCTS.map((p) => (
-              <option key={p} value={p}>{p}</option>
+              <option key={p} value={p}>
+                {p}
+              </option>
             ))}
           </select>
         </div>
-        <a href={api.exportUrl({ dimension, from: from || undefined, to: to || undefined, product: product || undefined, filter: effectiveFilterQuery, scope: scopeValue, scopeDimension })}>
-          <button className="secondary" type="button">Export CSV</button>
+        <a
+          href={api.exportUrl({
+            dimension,
+            from: from || undefined,
+            to: to || undefined,
+            product: product || undefined,
+            filter: effectiveFilterQuery,
+            scope: scopeValue,
+            scopeDimension,
+          })}
+        >
+          <button className="secondary" type="button">
+            Export CSV
+          </button>
         </a>
-        <a href={api.exportGroupsDailyUrl({ dimension, from: from || undefined, to: to || undefined, product: product || undefined, filter: effectiveFilterQuery, scope: scopeValue, scopeDimension })}>
-          <button className="secondary" type="button">Export daily CSV</button>
+        <a
+          href={api.exportGroupsDailyUrl({
+            dimension,
+            from: from || undefined,
+            to: to || undefined,
+            product: product || undefined,
+            filter: effectiveFilterQuery,
+            scope: scopeValue,
+            scopeDimension,
+          })}
+        >
+          <button className="secondary" type="button">
+            Export daily CSV
+          </button>
         </a>
       </div>
 
@@ -629,7 +702,15 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
                   .filter((k) => overallSummary.byKey.has(k))
                   .map((k) => (
                     <div key={k} className="row muted" style={{ gap: 6, alignItems: "center", fontSize: 12 }}>
-                      <span style={{ width: 8, height: 8, borderRadius: 2, background: stackColor.get(k), display: "inline-block" }} />
+                      <span
+                        style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: 2,
+                          background: stackColor.get(k),
+                          display: "inline-block",
+                        }}
+                      />
                       <span style={{ flex: 1 }}>{k}</span>
                       <span>{usd((overallSummary.byKey.get(k) ?? 0) * 100)}</span>
                     </div>
@@ -646,7 +727,15 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
                     .filter((k) => combinedRegionSummary.byKey.has(k))
                     .map((k) => (
                       <div key={k} className="row muted" style={{ gap: 6, alignItems: "center", fontSize: 12 }}>
-                        <span style={{ width: 8, height: 8, borderRadius: 2, background: stackColor.get(k), display: "inline-block" }} />
+                        <span
+                          style={{
+                            width: 8,
+                            height: 8,
+                            borderRadius: 2,
+                            background: stackColor.get(k),
+                            display: "inline-block",
+                          }}
+                        />
                         <span style={{ flex: 1 }}>{k}</span>
                         <span>{usd((combinedRegionSummary.byKey.get(k) ?? 0) * 100)}</span>
                       </div>
@@ -689,7 +778,16 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
                           fillOpacity={i % 2 ? 0.07 : 0.04}
                           stroke="#2a2f3a"
                           strokeDasharray="3 3"
-                          label={wide ? { value: wrapLabel(c.name, 18, 1)[0], position: "insideTopLeft", fill: "#9aa3b2", fontSize: 11 } : undefined}
+                          label={
+                            wide
+                              ? {
+                                  value: wrapLabel(c.name, 18, 1)[0],
+                                  position: "insideTopLeft",
+                                  fill: "#9aa3b2",
+                                  fontSize: 11,
+                                }
+                              : undefined
+                          }
                         />
                       );
                     })}
@@ -720,7 +818,18 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
                 </BarChart>
               </ResponsiveContainer>
               {regionSummaries.length > 0 && (
-                <div style={{ position: "absolute", top: 8, right: 12, zIndex: 30, display: "flex", flexDirection: "column", gap: 6, pointerEvents: "none" }}>
+                <div
+                  style={{
+                    position: "absolute",
+                    top: 8,
+                    right: 12,
+                    zIndex: 30,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 6,
+                    pointerEvents: "none",
+                  }}
+                >
                   {regionSummaries.length > 1 && (
                     <button
                       type="button"
@@ -765,8 +874,18 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
                           .filter((k) => s.byKey.has(k))
                           .map((k) => (
                             <div key={k} className="row" style={{ gap: 6, alignItems: "center" }}>
-                              <span style={{ width: 8, height: 8, borderRadius: 2, background: stackColor.get(k), display: "inline-block" }} />
-                              <span className="muted" style={{ flex: 1 }}>{k}</span>
+                              <span
+                                style={{
+                                  width: 8,
+                                  height: 8,
+                                  borderRadius: 2,
+                                  background: stackColor.get(k),
+                                  display: "inline-block",
+                                }}
+                              />
+                              <span className="muted" style={{ flex: 1 }}>
+                                {k}
+                              </span>
                               <span>{usd((s.byKey.get(k) ?? 0) * 100)}</span>
                             </div>
                           ))}
@@ -795,12 +914,16 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
       {data && data.groups.length > 0 && (
         <>
           <div className="row" style={{ marginBottom: 8, alignItems: "center" }}>
-            <h3 style={{ margin: 0 }}>{metric.label} by {dimensionLabel}</h3>
+            <h3 style={{ margin: 0 }}>
+              {metric.label} by {dimensionLabel}
+            </h3>
             <div>
               <label>Chart metric</label>
               <select value={String(metric.key)} onChange={(e) => setMetricKey(e.target.value)}>
                 {METRICS.map((m) => (
-                  <option key={String(m.key)} value={String(m.key)}>{m.label}</option>
+                  <option key={String(m.key)} value={String(m.key)}>
+                    {m.label}
+                  </option>
                 ))}
               </select>
             </div>
@@ -854,7 +977,9 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
                 <select value={secondary} onChange={(e) => setSecondary(e.target.value)}>
                   <option value="">None</option>
                   {secondaryOptions.map((d) => (
-                    <option key={d.id} value={d.id}>{d.label}</option>
+                    <option key={d.id} value={d.id}>
+                      {d.label}
+                    </option>
                   ))}
                 </select>
               </div>

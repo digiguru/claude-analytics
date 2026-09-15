@@ -171,10 +171,42 @@ test("buildOverview and buildOverviewFromUsers agree on totals for equivalent mu
     orgProductRow({ date: "2026-06-02", product: "chat", costCents: 50, totalTokens: 20, requests: 1 }),
   ];
   const userRows: UserProductRow[] = [
-    userProductRow({ date: "2026-06-01", userId: "u1", email: "a@x.com", product: "chat", costCents: 60, totalTokens: 25, requests: 1 }),
-    userProductRow({ date: "2026-06-01", userId: "u2", email: "b@x.com", product: "chat", costCents: 40, totalTokens: 15, requests: 0 }),
-    userProductRow({ date: "2026-06-01", userId: "u1", email: "a@x.com", product: "claude_code", costCents: 200, totalTokens: 80, requests: 2 }),
-    userProductRow({ date: "2026-06-02", userId: "u2", email: "b@x.com", product: "chat", costCents: 50, totalTokens: 20, requests: 1 }),
+    userProductRow({
+      date: "2026-06-01",
+      userId: "u1",
+      email: "a@x.com",
+      product: "chat",
+      costCents: 60,
+      totalTokens: 25,
+      requests: 1,
+    }),
+    userProductRow({
+      date: "2026-06-01",
+      userId: "u2",
+      email: "b@x.com",
+      product: "chat",
+      costCents: 40,
+      totalTokens: 15,
+      requests: 0,
+    }),
+    userProductRow({
+      date: "2026-06-01",
+      userId: "u1",
+      email: "a@x.com",
+      product: "claude_code",
+      costCents: 200,
+      totalTokens: 80,
+      requests: 2,
+    }),
+    userProductRow({
+      date: "2026-06-02",
+      userId: "u2",
+      email: "b@x.com",
+      product: "chat",
+      costCents: 50,
+      totalTokens: 20,
+      requests: 1,
+    }),
   ];
 
   const org = buildOverview([], orgRows);
@@ -315,9 +347,24 @@ test("scaleUserProductRow: weight 1 returns the same object (no copy)", () => {
 });
 
 test("scaleUserProductRow: scales every numeric metric by the weight", () => {
-  const row = userProductRow({ costCents: 100, totalTokens: 40, inputTokens: 10, outputTokens: 20, cacheReadTokens: 8, requests: 4 });
+  const row = userProductRow({
+    costCents: 100,
+    totalTokens: 40,
+    inputTokens: 10,
+    outputTokens: 20,
+    cacheReadTokens: 8,
+    requests: 4,
+  });
   const scaled = scaleUserProductRow(row, 0.5);
-  expect(scaled).toEqual({ ...row, costCents: 50, totalTokens: 20, inputTokens: 5, outputTokens: 10, cacheReadTokens: 4, requests: 2 });
+  expect(scaled).toEqual({
+    ...row,
+    costCents: 50,
+    totalTokens: 20,
+    inputTokens: 5,
+    outputTokens: 10,
+    cacheReadTokens: 4,
+    requests: 2,
+  });
 });
 
 test("scaleUserDayRow: weight 1 returns the same object (no copy)", () => {

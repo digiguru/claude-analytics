@@ -31,8 +31,7 @@ export function parseAttributesCsv(text: string): CsvParseResult {
   const emailHeader = headers.find((h) => h.toLowerCase() === "email");
   if (!emailHeader) {
     throw new Error(
-      `CSV is missing an "email" column (needed to join to analytics). ` +
-        `Found columns: ${headers.join(", ")}.`,
+      `CSV is missing an "email" column (needed to join to analytics). ` + `Found columns: ${headers.join(", ")}.`,
     );
   }
   const dimensions = headers.filter((h) => h !== emailHeader);
