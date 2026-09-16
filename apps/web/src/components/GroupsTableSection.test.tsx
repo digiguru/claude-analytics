@@ -75,3 +75,39 @@ test("GroupsTableSection: a resolved secondary dimension renders the nested dril
   expect(screen.getByText(/Expand a row below to see its breakdown by Team/)).toBeInTheDocument();
   expect(screen.queryByText("No data.")).not.toBeInTheDocument(); // primaryRows has one row
 });
+
+// The flat table seeds SortableTable from the page's "Sort order": "Size
+// (metric)" hands it the metric column descending, anything else hands it the
+// group name ascending. Without a breakdown this is the only thing this
+// section decides, so both ways through it are worth pinning.
+test("GroupsTableSection: a non-metric sort order seeds the flat table by name, ascending", () => {
+  render(
+    <GroupsTableSection
+      columns={columns}
+      orderedGroups={[groupRow({ key: "Beta" }), groupRow({ key: "Alpha" })]}
+      data={response()}
+      secondaryLabel=""
+      sortOrder="alpha"
+      metricKey="costCents"
+    />,
+  );
+  expect(screen.getByRole("columnheader")).toHaveTextContent("Group ▲"); // ascending
+  expect(screen.getAllByRole("cell").map((c) => c.textContent)).toEqual(["Alpha", "Beta"]);
+});
+
+test("GroupsTableSection: the metric sort order seeds it by the metric column instead", () => {
+  render(
+    <GroupsTableSection
+      columns={columns}
+      orderedGroups={[groupRow({ key: "Beta" }), groupRow({ key: "Alpha" })]}
+      data={response()}
+      secondaryLabel=""
+      sortOrder="size"
+      metricKey="costCents"
+    />,
+  );
+  // costCents isn't one of this table's columns, so nothing is re-sorted and
+  // the page's own metric ordering is left exactly as handed over.
+  expect(screen.getByRole("columnheader")).toHaveTextContent("Group");
+  expect(screen.getAllByRole("cell").map((c) => c.textContent)).toEqual(["Beta", "Alpha"]);
+});

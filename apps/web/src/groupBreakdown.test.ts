@@ -99,3 +99,22 @@ test("buildGroupBreakdown: a group with no breakdown rows at all gets no topmost
   const out = buildGroupBreakdown([g("Alpha", 100), g("Empty", 0)], [s("Alpha", "T", 100)], "costCents");
   expect(out.rows[1]).toEqual({ name: "Empty", [TOTAL_KEY]: 0, [TOP_KEY]: "" });
 });
+
+// Money arrives from the API as fractional cents and has produced $NaN before
+// (#21); a non-finite metric value must fall back to 0 rather than poisoning
+// the key ranking and every total downstream of it.
+test("buildGroupBreakdown: a non-numeric metric value counts as 0, not NaN", () => {
+  const out = buildGroupBreakdown(
+    [g("Alpha", 100)],
+    [s("Alpha", "Team A", Number.NaN), s("Alpha", "Team B", 100)],
+    "costCents",
+  );
+  expect(out.keys).toEqual(["Team B", "Team A"]); // NaN ranks last, not first
+  expect(out.rows[0]).toEqual({
+    name: "Alpha",
+    "Team A": 0,
+    "Team B": 100,
+    [TOTAL_KEY]: 100,
+    [TOP_KEY]: "Team B",
+  });
+});
