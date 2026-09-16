@@ -25,6 +25,7 @@ export function makeTestState(overrides: Partial<ServerConfig> = {}): AppState {
     csvPath: undefined,
     projectsPath: undefined,
     port: 0,
+    allowedOrigins: [],
     ...overrides,
   };
   return new AppState(config, new MetricsDb(config.dbPath));

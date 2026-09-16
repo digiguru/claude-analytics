@@ -201,6 +201,59 @@ test("/api/sync: a cross-origin request is rejected", async () => {
   expect(res.statusCode).toBe(403);
 });
 
+// ---- ALLOWED_ORIGINS: the Origin/Host mismatch a dev proxy or a staging
+// deployment creates. Each of these sends a deliberately malformed `from` so a
+// request that clears the guard stops at the 400 — proving the guard passed
+// without making a real upstream call. ----
+
+const syncFrom = (origin: string, host = "127.0.0.1:3000") => ({
+  method: "POST" as const,
+  url: "/api/sync",
+  headers: { origin, host },
+  payload: { from: "banana", to: "2026-06-01" },
+});
+
+test("/api/sync: an ALLOWED_ORIGINS host passes the guard despite a mismatched Host (the vite dev proxy case)", async () => {
+  const { app } = createTestApp(makeTestState({ allowedOrigins: ["localhost:5173"] }));
+  const res = await app.inject(syncFrom("http://localhost:5173"));
+  expect(res.statusCode).toBe(400);
+});
+
+test("/api/sync: an origin outside ALLOWED_ORIGINS is still rejected", async () => {
+  const { app } = createTestApp(makeTestState({ allowedOrigins: ["localhost:5173"] }));
+  const res = await app.inject(syncFrom("http://evil.example"));
+  expect(res.statusCode).toBe(403);
+});
+
+test("/api/sync: a wildcard entry admits any subdomain but not the bare parent", async () => {
+  const { app } = createTestApp(makeTestState({ allowedOrigins: ["*.preview.example.com"] }));
+  expect((await app.inject(syncFrom("https://pr-42.preview.example.com"))).statusCode).toBe(400);
+  expect((await app.inject(syncFrom("https://a.b.preview.example.com"))).statusCode).toBe(400);
+  expect((await app.inject(syncFrom("https://preview.example.com"))).statusCode).toBe(403);
+  // the suffix must be a whole label boundary — not merely a string suffix
+  expect((await app.inject(syncFrom("https://evilpreview.example.com"))).statusCode).toBe(403);
+});
+
+test("/api/sync: the same-origin case still passes with ALLOWED_ORIGINS set", async () => {
+  const { app } = createTestApp(makeTestState({ allowedOrigins: ["staging.example.com"] }));
+  const res = await app.inject(syncFrom("http://127.0.0.1:3000"));
+  expect(res.statusCode).toBe(400);
+});
+
+test("/api/csv: an ALLOWED_ORIGINS upload succeeds where a bare host comparison would 403", async () => {
+  const state = makeTestState({ allowedOrigins: ["localhost:5173"] });
+  const { app } = createTestApp(state);
+  const { body, headers } = multipartBody("attributes.csv", "email,Level\na@x.com,Senior\n");
+  const res = await app.inject({
+    method: "POST",
+    url: "/api/csv",
+    headers: { ...headers, origin: "http://localhost:5173", host: "127.0.0.1:3000" },
+    payload: body,
+  });
+  expect(res.statusCode).toBe(200);
+  expect(state.attributes.size).toBe(1);
+});
+
 // ---- /api/csv, /api/projects uploads (#16) ----
 
 test("/api/csv: no file uploaded is a 400", async () => {

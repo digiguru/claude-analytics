@@ -3,12 +3,13 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MetricsDb } from "@claude-analytics/core";
-import { AppState, loadConfig, type ServerConfig } from "./state.js";
+import { AppState, loadConfig, parseAllowedOrigins, type ServerConfig } from "./state.js";
 
 const dirs: string[] = [];
 afterEach(() => {
   while (dirs.length) rmSync(dirs.pop()!, { recursive: true, force: true });
   delete process.env.PORT;
+  delete process.env.ALLOWED_ORIGINS;
 });
 
 function tempDir(): string {
@@ -18,7 +19,15 @@ function tempDir(): string {
 }
 
 function baseConfig(overrides: Partial<ServerConfig> = {}): ServerConfig {
-  return { apiKey: "k", dbPath: ":memory:", csvPath: undefined, projectsPath: undefined, port: 0, ...overrides };
+  return {
+    apiKey: "k",
+    dbPath: ":memory:",
+    csvPath: undefined,
+    projectsPath: undefined,
+    port: 0,
+    allowedOrigins: [],
+    ...overrides,
+  };
 }
 
 // ---- loadConfig: PORT validation (#18 item 6) ----
@@ -42,6 +51,56 @@ test("loadConfig: a PORT outside 0-65535 fails fast", () => {
   expect(() => loadConfig()).toThrow(/Invalid PORT/);
   process.env.PORT = "70000";
   expect(() => loadConfig()).toThrow(/Invalid PORT/);
+});
+
+// ---- parseAllowedOrigins / ALLOWED_ORIGINS ----
+
+test("parseAllowedOrigins: unset or empty is an empty list, not a crash", () => {
+  expect(parseAllowedOrigins(undefined)).toEqual([]);
+  expect(parseAllowedOrigins("")).toEqual([]);
+  expect(parseAllowedOrigins("  ")).toEqual([]);
+});
+
+test("parseAllowedOrigins: comma-separated entries are split, trimmed and lowercased", () => {
+  expect(parseAllowedOrigins("Staging.Example.com, preview.example.com")).toEqual([
+    "staging.example.com",
+    "preview.example.com",
+  ]);
+});
+
+test("parseAllowedOrigins: a full origin is reduced to its host, port kept", () => {
+  expect(parseAllowedOrigins("http://localhost:5173")).toEqual(["localhost:5173"]);
+  expect(parseAllowedOrigins("https://staging.example.com/")).toEqual(["staging.example.com"]);
+});
+
+test("parseAllowedOrigins: empty segments (a trailing comma) are skipped, duplicates collapsed", () => {
+  expect(parseAllowedOrigins("a.example.com,,b.example.com,")).toEqual(["a.example.com", "b.example.com"]);
+  expect(parseAllowedOrigins("https://a.example.com,a.example.com")).toEqual(["a.example.com"]);
+});
+
+test("parseAllowedOrigins: a wildcard entry is preserved for subdomain matching", () => {
+  expect(parseAllowedOrigins("*.preview.example.com,*.example.com:8080")).toEqual([
+    "*.preview.example.com",
+    "*.example.com:8080",
+  ]);
+});
+
+test("parseAllowedOrigins: a malformed entry fails fast rather than silently widening the guard", () => {
+  expect(() => parseAllowedOrigins("not a host")).toThrow(/Invalid ALLOWED_ORIGINS entry/);
+  expect(() => parseAllowedOrigins("good.example.com,*")).toThrow(/Invalid ALLOWED_ORIGINS entry/);
+  expect(() => parseAllowedOrigins("example.com:99999999")).toThrow(/Invalid ALLOWED_ORIGINS entry/);
+});
+
+test("loadConfig: ALLOWED_ORIGINS is read from the environment", () => {
+  process.env.ALLOWED_ORIGINS = "http://localhost:5173,*.preview.example.com";
+  expect(loadConfig().allowedOrigins).toEqual(["localhost:5173", "*.preview.example.com"]);
+});
+
+// `delete` explicitly rather than relying on absence: state.ts imports
+// dotenv/config, so a developer's own .env would otherwise leak into this test.
+test("loadConfig: a missing ALLOWED_ORIGINS leaves the guard same-origin-only", () => {
+  delete process.env.ALLOWED_ORIGINS;
+  expect(loadConfig().allowedOrigins).toEqual([]);
 });
 
 // ---- AppState: malformed config files don't crash the server at boot (#18 item 5) ----

@@ -38,7 +38,9 @@ Now open `.env` and set `ANTHROPIC_ANALYTICS_API_KEY`. This is a **Claude Enterp
 
 The key stays server-side only (in your local `.env`, which is git-ignored) and is never sent to the browser.
 
-Nothing else in `.env` is required to start — `CSV_PATH`, `PROJECTS_PATH`, `DB_PATH`, and `PORT` all have sensible defaults.
+Nothing else in `.env` is required to start — `CSV_PATH`, `PROJECTS_PATH`, `DB_PATH`, `PORT`, and `ALLOWED_ORIGINS` all have sensible defaults.
+
+One exception if you run `npm run dev`: set `ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173` (it's already in `.env.example`). Vite's dev proxy rewrites the `Host` header to its target, so the browser's origin no longer matches the host Fastify sees, and the cross-origin guard on `/api/sync`, `/api/csv` and `/api/projects` rejects every POST with a 403 — "Sync from API" and both upload buttons do nothing but show that error. `npm start` serves the app from Fastify itself, single-origin, and needs no setting.
 
 ### 3. (Optional) Add your data export CSV
 
@@ -216,6 +218,8 @@ Started with `npm run dev` (see [Run it locally](#run-it-locally)). The three ta
 ## Security & deployment constraints
 
 The server has **no authentication** and binds to `127.0.0.1` only, by design — that binding is the only thing standing between an anonymous caller and every employee email, per-person cost/token spend, HR-ish CSV attributes, and the ability to trigger a sync against the org's analytics key. **Do not expose this server beyond localhost** — no `--host`, no SSH port-forward exposing it further, no container port mapping to a reachable interface — without adding real authentication first. State-mutating endpoints (`/api/csv`, `/api/projects`, `/api/sync`) additionally reject cross-origin requests (a mismatched `Origin` header), which defends against a malicious page in the same browser silently triggering them, but is not a substitute for the localhost-only binding.
+
+`ALLOWED_ORIGINS` widens that `Origin` check — a comma-separated list of hosts, full origins, or `*.`-prefixed subdomain wildcards, on top of the always-allowed same-origin case (see `.env.example`). It exists for the cases where the browser's origin legitimately differs from the `Host` Fastify sees: the `vite dev` proxy, and staging/preview deployments behind a proxy or CDN. Two things it does **not** do. It doesn't add authentication — an allowlisted origin is still an anonymous caller, so a staging or preview deployment needs real auth in front of it before it's reachable by anyone else, and the `127.0.0.1` bind in `apps/server/src/index.ts` is deliberately not configurable by env var to keep that decision explicit. And a wildcard is only as trustworthy as the domain under it: `*.preview.example.com` trusts anyone who can stand up a subdomain there, so prefer exact origins wherever the preview hostnames are predictable.
 
 ## Notes on the data
 

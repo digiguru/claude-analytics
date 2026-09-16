@@ -87,7 +87,14 @@ function userDayRow(overrides: Partial<UserDayRow> = {}): UserDayRow {
   };
 }
 
-const config = { apiKey: "e2e-test-key", dbPath: ":memory:", csvPath: undefined, projectsPath: undefined, port: PORT };
+const config = {
+  apiKey: "e2e-test-key",
+  dbPath: ":memory:",
+  csvPath: undefined,
+  projectsPath: undefined,
+  port: PORT,
+  allowedOrigins: [],
+};
 const db = new MetricsDb(config.dbPath);
 db.upsertSummaries([summaryRow()]);
 db.upsertOrgProducts([orgProductRow()]);

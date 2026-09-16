@@ -17,6 +17,61 @@ export interface ServerConfig {
   csvPath?: string;
   projectsPath?: string;
   port: number;
+  /** Extra browser origins allowed to make state-mutating requests, beyond the
+   *  always-allowed same-origin case. See parseAllowedOrigins / originAllowed. */
+  allowedOrigins: string[];
+}
+
+/** A bare host with optional port: `staging.example.com`, `localhost:5173`. */
+const HOST_PATTERN = /^[a-z0-9-]+(\.[a-z0-9-]+)*(:\d{1,5})?$/;
+/** A subdomain wildcard: `*.preview.example.com`, `*.example.com:8080`. */
+const WILDCARD_PATTERN = /^\*(\.[a-z0-9-]+)+(:\d{1,5})?$/;
+
+/** Reduce one ALLOWED_ORIGINS entry to the host form originAllowed compares
+ *  against: lowercased, scheme dropped, path/trailing slash dropped. */
+function normalizeOriginEntry(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/^[a-z][a-z0-9+.-]*:\/\//, "")
+    .replace(/\/.*$/, "");
+}
+
+/**
+ * Parse ALLOWED_ORIGINS — a comma-separated list of origins allowed to make
+ * state-mutating requests (`/api/sync`, `/api/csv`, `/api/projects`) even
+ * though they don't match the server's own `Host`. This exists for deployments
+ * where the browser's origin legitimately differs from the host the server
+ * sees: a `vite dev` proxy (which rewrites `Host` to its target), or a
+ * staging/preview environment behind a proxy or CDN.
+ *
+ *   ALLOWED_ORIGINS=http://localhost:5173,staging.example.com,*.preview.example.com
+ *
+ * Each entry may be a full origin (the scheme is dropped — matching is on host,
+ * same as the same-origin comparison it extends), a bare host with an optional
+ * port, or a `*.`-prefixed wildcard matching any subdomain of that suffix but
+ * never the bare parent. Note that browsers omit the default port from `Origin`,
+ * so write `example.com`, not `example.com:443`.
+ *
+ * Empty segments are skipped (a trailing comma is harmless); an entry that is
+ * neither a host nor a wildcard throws at boot, on the same reasoning as PORT —
+ * a typo in a security setting must be loud, not silently ignored.
+ */
+export function parseAllowedOrigins(raw: string | undefined): string[] {
+  if (!raw) return [];
+  const origins: string[] = [];
+  for (const segment of raw.split(",")) {
+    const entry = normalizeOriginEntry(segment);
+    if (!entry) continue;
+    if (!HOST_PATTERN.test(entry) && !WILDCARD_PATTERN.test(entry)) {
+      throw new Error(
+        `Invalid ALLOWED_ORIGINS entry "${segment.trim()}" — expected a host, an origin, ` +
+          `or a "*."-prefixed wildcard (e.g. http://localhost:5173, staging.example.com, *.preview.example.com).`,
+      );
+    }
+    if (!origins.includes(entry)) origins.push(entry);
+  }
+  return origins;
 }
 
 export function loadConfig(): ServerConfig {
@@ -31,6 +86,7 @@ export function loadConfig(): ServerConfig {
     csvPath: process.env.CSV_PATH ? resolve(process.env.CSV_PATH) : undefined,
     projectsPath: resolve(process.env.PROJECTS_PATH ?? "./config/projects.yaml"),
     port,
+    allowedOrigins: parseAllowedOrigins(process.env.ALLOWED_ORIGINS),
   };
 }
 

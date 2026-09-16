@@ -296,29 +296,47 @@ export function resolveMemberRows(state: AppState, query: RangeQuery & { filter?
   return { userProducts, emails };
 }
 
-/**
- * Reject a state-mutating request whose `Origin` doesn't match the server's
- * own host — see #16: `multipart/form-data` and plain-body POSTs are
- * CORS-simple, so a cross-origin page can submit one with no preflight and no
- * CORS plugin here to reject it. Browsers send `Origin` on every cross-origin
- * POST; same-origin requests either omit it or send a matching one. A
- * request with no Origin at all (curl, the CLI, same-origin fetch in some
- * browsers) is allowed through — this defends against a *browser* silently
- * carrying out the request, not against direct API use of a server that's
- * already meant to be localhost-only (see README).
- */
-export function originAllowed(req: FastifyRequest): boolean {
-  const origin = req.headers.origin;
-  if (!origin) return true;
-  try {
-    return new URL(origin).host === req.headers.host;
-  } catch {
-    return false;
-  }
+/** Does `host` satisfy one ALLOWED_ORIGINS entry? A `*.`-prefixed entry matches
+ *  any subdomain of the suffix, but never the bare parent domain itself. */
+function hostMatchesPattern(host: string, pattern: string): boolean {
+  if (!pattern.startsWith("*.")) return host === pattern;
+  const suffix = pattern.slice(1); // "*.preview.example.com" -> ".preview.example.com"
+  return host.length > suffix.length && host.endsWith(suffix);
 }
 
-function rejectCrossOrigin(req: FastifyRequest, reply: FastifyReply): boolean {
-  if (originAllowed(req)) return true;
+/**
+ * Reject a state-mutating request whose `Origin` matches neither the server's
+ * own host nor the configured ALLOWED_ORIGINS — see #16: `multipart/form-data`
+ * and plain-body POSTs are CORS-simple, so a cross-origin page can submit one
+ * with no preflight and no CORS plugin here to reject it. Browsers send
+ * `Origin` on every cross-origin POST; same-origin requests either omit it or
+ * send a matching one. A request with no Origin at all (curl, the CLI,
+ * same-origin fetch in some browsers) is allowed through — this defends
+ * against a *browser* silently carrying out the request, not against direct
+ * API use of a server that's already meant to be localhost-only (see README).
+ *
+ * The same-origin comparison alone is too strict whenever something between
+ * the browser and Fastify rewrites `Host`: `vite dev`'s proxy does exactly
+ * that (its string-shorthand config implies `changeOrigin: true`), so in dev
+ * the browser's `localhost:5173` never matched the proxied `127.0.0.1:3000`
+ * and every POST 403'd. Staging/preview deployments behind a proxy or CDN have
+ * the same shape. ALLOWED_ORIGINS is the escape hatch; see parseAllowedOrigins.
+ */
+export function originAllowed(req: FastifyRequest, allowedOrigins: readonly string[] = []): boolean {
+  const origin = req.headers.origin;
+  if (!origin) return true;
+  let host: string;
+  try {
+    host = new URL(origin).host.toLowerCase();
+  } catch {
+    return false; // includes the literal "null" a sandboxed iframe sends
+  }
+  if (host === req.headers.host?.toLowerCase()) return true;
+  return allowedOrigins.some((pattern) => hostMatchesPattern(host, pattern));
+}
+
+function rejectCrossOrigin(req: FastifyRequest, reply: FastifyReply, allowedOrigins: readonly string[]): boolean {
+  if (originAllowed(req, allowedOrigins)) return true;
   reply.code(403).send({ error: "Cross-origin requests are not allowed." });
   return false;
 }
@@ -395,7 +413,7 @@ export function buildApp(state: AppState, opts: BuildAppOptions = {}): FastifyIn
   });
 
   app.post<{ Body: { from?: string; to?: string } }>("/api/sync", async (req, reply) => {
-    if (!rejectCrossOrigin(req, reply)) return;
+    if (!rejectCrossOrigin(req, reply, state.config.allowedOrigins)) return;
     if (state.syncInFlight) return reply.code(409).send({ error: "A sync is already in progress." });
     let from: string, to: string;
     try {
@@ -647,7 +665,7 @@ export function buildApp(state: AppState, opts: BuildAppOptions = {}): FastifyIn
   });
 
   app.post("/api/csv", async (req, reply) => {
-    if (!rejectCrossOrigin(req, reply)) return;
+    if (!rejectCrossOrigin(req, reply, state.config.allowedOrigins)) return;
     let file;
     try {
       file = await req.file();
@@ -680,7 +698,7 @@ export function buildApp(state: AppState, opts: BuildAppOptions = {}): FastifyIn
   });
 
   app.post("/api/projects", async (req, reply) => {
-    if (!rejectCrossOrigin(req, reply)) return;
+    if (!rejectCrossOrigin(req, reply, state.config.allowedOrigins)) return;
     let file;
     try {
       file = await req.file();
