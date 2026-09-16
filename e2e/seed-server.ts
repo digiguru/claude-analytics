@@ -95,17 +95,31 @@ const config = {
   port: PORT,
   allowedOrigins: [],
 };
+// Three people across two Roles and two Levels, so the Groups page has both a
+// "Stacking by" dimension *and* a distinct "Breakdown by" one to stack by —
+// and so at least one primary group (Engineer) splits into two segments rather
+// than a single-colour bar. Costs are deliberately all different so a label or
+// tooltip figure can only match one of them.
+const PEOPLE = [
+  { userId: "u1", email: "a@x.com", costCents: 1234 },
+  { userId: "u2", email: "b@x.com", costCents: 2000 },
+  { userId: "u3", email: "c@x.com", costCents: 500 },
+];
+
 const db = new MetricsDb(config.dbPath);
 db.upsertSummaries([summaryRow()]);
 db.upsertOrgProducts([orgProductRow()]);
-db.upsertUserProducts([userProductRow()]);
-db.upsertUserDays([userDayRow()]);
+db.upsertUserProducts(PEOPLE.map((p) => userProductRow(p)));
+db.upsertUserDays(PEOPLE.map(({ userId, email }) => userDayRow({ userId, email, name: email })));
 
 const state = new AppState(config, db);
 // A minimal CSV so the Groups page has a "Stacking by" dimension to
 // auto-select — with none loaded it has nothing to group by at all, and
-// stays blank rather than fetching/rendering a chart.
-const { attributes, count } = parseAttributesCsv("email,Role\na@x.com,Engineer\n");
+// stays blank rather than fetching/rendering a chart. The second column gives
+// "Breakdown by" something to offer that isn't whatever is being stacked by.
+const { attributes, count } = parseAttributesCsv(
+  "email,Role,Level\na@x.com,Engineer,Senior\nb@x.com,Engineer,Junior\nc@x.com,Designer,Senior\n",
+);
 state.setAttributes(attributes, `e2e seed CSV (${count} row(s))`);
 
 const app = buildApp(state, { serveStatic: true });

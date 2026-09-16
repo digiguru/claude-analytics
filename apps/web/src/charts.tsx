@@ -1,4 +1,6 @@
 // Shared chart helpers.
+import { OTHER_KEY, UNASSIGNED_KEY } from "./stack.js";
+
 const TICK_FILL = "#9aa3b2";
 const TICK_FONT = 11;
 const LINE_HEIGHT = 12;
@@ -83,6 +85,23 @@ export function xAxisProps(
 export const COLORS = ["#d97757", "#5a6b8c", "#7fae7f", "#b08cc0", "#c0a96b", "#6b9bc0"];
 /** Colour reserved for the "grey" bucket in stacked-by-group charts (e.g. Unassigned, Other). */
 export const NEUTRAL_COLOR = "#5c6270";
+/** Darker grey for the "Other" catch-all, so it reads as behind Unassigned. */
+export const OTHER_COLOR = "#3a3f4d";
+
+/** Assign a stable colour per stacked series key: the categorical palette in
+ *  key order, with the two reserved buckets pinned to their own greys (and not
+ *  consuming a palette slot). Shared by every chart that stacks by group key
+ *  so a legend means the same thing in each. */
+export function buildStackColors(keys: string[]): Map<string, string> {
+  const colorByKey = new Map<string, string>();
+  let i = 0;
+  for (const key of keys) {
+    if (key === UNASSIGNED_KEY) colorByKey.set(key, NEUTRAL_COLOR);
+    else if (key === OTHER_KEY) colorByKey.set(key, OTHER_COLOR);
+    else colorByKey.set(key, COLORS[i++ % COLORS.length]!);
+  }
+  return colorByKey;
+}
 
 // ---- Shared layout for charts that carry a CycleRail annotation strip below
 // them. The rail is a plain CSS grid, not part of the recharts SVG, so it needs

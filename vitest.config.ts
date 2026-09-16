@@ -42,6 +42,8 @@ export default defineConfig({
       // Phase 4 (#36) adds apps/web's pure-logic modules; #29 (GroupsView
       // decomposition) adds the further extractions that came out of it
       // (stack.ts, quickFilter.ts, groupColumns.ts, cycles.ts's resolveBucket);
+      // the chart-level "Breakdown by" adds groupBreakdown.ts, stack.ts's
+      // sibling pivot, gated to match it;
       // Phase 5 (#37) adds apps/cli's command modules and format helpers, after
       // moving all command logic out of index.ts's `.action()` bodies (index.ts
       // itself stays ungated commander wiring, like apps/server's index.ts).
@@ -76,6 +78,7 @@ export default defineConfig({
         "apps/web/src/cycles.ts": { lines: 90, branches: 85 },
         "apps/web/src/charts.tsx": { lines: 80, branches: 70 },
         "apps/web/src/stack.ts": { lines: 95, branches: 90 },
+        "apps/web/src/groupBreakdown.ts": { lines: 95, branches: 90 },
         "apps/web/src/quickFilter.ts": { lines: 95, branches: 90 },
         "apps/web/src/groupColumns.ts": { lines: 90, branches: 80 },
         "apps/cli/src/format.ts": { lines: 90, branches: 90 },

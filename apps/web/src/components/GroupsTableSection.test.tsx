@@ -1,6 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { test, expect, vi } from "vitest";
+import { test, expect } from "vitest";
 import { groupRow, groupRowWithPrimary } from "../__tests__/groupRow.js";
 import { GroupsTableSection } from "./GroupsTableSection.js";
 import type { GroupsResponse } from "../api.js";
@@ -24,42 +23,39 @@ function response(overrides: Partial<GroupsResponse> = {}): GroupsResponse {
   };
 }
 
-test("GroupsTableSection: no secondary options hides the drill-down picker, shows the flat table", () => {
+test("GroupsTableSection: no secondary dimension shows the flat table and no drill-down hint", () => {
   render(
     <GroupsTableSection
       columns={columns}
       orderedGroups={[groupRow({ key: "Alpha" })]}
       data={response()}
-      secondary=""
-      onSecondaryChange={vi.fn()}
-      secondaryOptions={[]}
       secondaryLabel=""
       sortOrder="size"
       metricKey="costCents"
     />,
   );
-  expect(screen.queryByText("Table breakdown by")).not.toBeInTheDocument();
   expect(screen.getByText("Alpha")).toBeInTheDocument();
+  expect(screen.queryByText(/Expand a row below/)).not.toBeInTheDocument();
 });
 
-test("GroupsTableSection: picking a secondary dimension reports it", async () => {
-  const onSecondaryChange = vi.fn();
-  const user = userEvent.setup();
+// The picker itself now lives in GroupTotalsChart (one "Breakdown by" control
+// drives both the chart's stacking and this table's expandable rows), so this
+// section must never grow a second one.
+test("GroupsTableSection: renders no breakdown picker of its own", () => {
   render(
     <GroupsTableSection
       columns={columns}
       orderedGroups={[groupRow({ key: "Alpha" })]}
-      data={response()}
-      secondary=""
-      onSecondaryChange={onSecondaryChange}
-      secondaryOptions={[{ id: "@team", label: "Team" }]}
-      secondaryLabel=""
+      data={response({
+        secondaryDimension: "@team",
+        secondaryGroups: [groupRowWithPrimary({ key: "Team A", primaryKey: "Alpha" })],
+      })}
+      secondaryLabel="Team"
       sortOrder="size"
       metricKey="costCents"
     />,
   );
-  await user.selectOptions(screen.getByRole("combobox"), "@team");
-  expect(onSecondaryChange).toHaveBeenCalledWith("@team");
+  expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
 });
 
 test("GroupsTableSection: a resolved secondary dimension renders the nested drill-down table", () => {
@@ -71,9 +67,6 @@ test("GroupsTableSection: a resolved secondary dimension renders the nested dril
         secondaryDimension: "@team",
         secondaryGroups: [groupRowWithPrimary({ key: "Team A", primaryKey: "Alpha" })],
       })}
-      secondary="@team"
-      onSecondaryChange={vi.fn()}
-      secondaryOptions={[{ id: "@team", label: "Team" }]}
       secondaryLabel="Team"
       sortOrder="size"
       metricKey="costCents"
@@ -81,4 +74,40 @@ test("GroupsTableSection: a resolved secondary dimension renders the nested dril
   );
   expect(screen.getByText(/Expand a row below to see its breakdown by Team/)).toBeInTheDocument();
   expect(screen.queryByText("No data.")).not.toBeInTheDocument(); // primaryRows has one row
+});
+
+// The flat table seeds SortableTable from the page's "Sort order": "Size
+// (metric)" hands it the metric column descending, anything else hands it the
+// group name ascending. Without a breakdown this is the only thing this
+// section decides, so both ways through it are worth pinning.
+test("GroupsTableSection: a non-metric sort order seeds the flat table by name, ascending", () => {
+  render(
+    <GroupsTableSection
+      columns={columns}
+      orderedGroups={[groupRow({ key: "Beta" }), groupRow({ key: "Alpha" })]}
+      data={response()}
+      secondaryLabel=""
+      sortOrder="alpha"
+      metricKey="costCents"
+    />,
+  );
+  expect(screen.getByRole("columnheader")).toHaveTextContent("Group ▲"); // ascending
+  expect(screen.getAllByRole("cell").map((c) => c.textContent)).toEqual(["Alpha", "Beta"]);
+});
+
+test("GroupsTableSection: the metric sort order seeds it by the metric column instead", () => {
+  render(
+    <GroupsTableSection
+      columns={columns}
+      orderedGroups={[groupRow({ key: "Beta" }), groupRow({ key: "Alpha" })]}
+      data={response()}
+      secondaryLabel=""
+      sortOrder="size"
+      metricKey="costCents"
+    />,
+  );
+  // costCents isn't one of this table's columns, so nothing is re-sorted and
+  // the page's own metric ordering is left exactly as handed over.
+  expect(screen.getByRole("columnheader")).toHaveTextContent("Group");
+  expect(screen.getAllByRole("cell").map((c) => c.textContent)).toEqual(["Beta", "Alpha"]);
 });

@@ -212,7 +212,7 @@ npm run cli -- export --group-by Level --out by-level.csv
 Started with `npm run dev` (see [Run it locally](#run-it-locally)). The three tabs:
 
 - **Overview** — daily cost & active users, cost by product, heaviest days.
-- **Groups & products** — aggregate any metric by any CSV column or by Project/Team/Client (if a projects file is loaded), with a cost-over-time chart, filter to a product, export CSV. Pick a **Secondary group by** (any other dimension, including **Member**) to drill into each group's own breakdown — e.g. Group by Team, Secondary by Member, to see who made up a team's cost.
+- **Groups & products** — aggregate any metric by any CSV column or by Project/Team/Client (if a projects file is loaded), with a cost-over-time chart, filter to a product, export CSV. Pick a **Breakdown by** (any other dimension, including **Member**) to split each bar of the totals chart into colourised stacked segments *and* make the table's rows expandable into the same breakdown — e.g. Stacking by Team, Breakdown by Member, to see who made up a team's cost. The bar heights and the chart's ordering still follow the **Chart metric**/**Sort order** controls; an average metric is drawn side-by-side rather than stacked, since averages don't add up.
 - **Members** — per-person cross-product usage, cost-by-product, daily trends.
 
 ## Security & deployment constraints

@@ -10,7 +10,7 @@ import {
   type TimelineDimension,
   type UserListEntry,
 } from "../api.js";
-import { COLORS, NEUTRAL_COLOR } from "../charts.js";
+import { buildStackColors } from "../charts.js";
 import { resolveBucket } from "../cycles.js";
 import {
   combineSummaries,
@@ -24,7 +24,7 @@ import { buildGroupColumns } from "../groupColumns.js";
 import { buildQuickFilterFacets, parseQuickFilter, resolveScopeProject } from "../quickFilter.js";
 import { useUrlParam } from "../url.js";
 import { isolateValue, mergeFilterSpecs, type FilterSpec } from "../filters.js";
-import { OTHER_KEY, stackRows, UNASSIGNED_KEY, type ChartBucket } from "../stack.js";
+import { stackRows, UNASSIGNED_KEY, type ChartBucket } from "../stack.js";
 import { CostOverTimeChart } from "./CostOverTimeChart.js";
 import { GroupsControls } from "./GroupsControls.js";
 import { GroupsTableSection } from "./GroupsTableSection.js";
@@ -46,8 +46,8 @@ const EMPTY_CYCLES: ProjectCycles["cycles"] = [];
 
 const METRICS: Metric[] = [
   { key: "costCents", label: "Total cost", money: true },
-  { key: "avgCostPerSeat", label: "Avg cost / seat", money: true },
-  { key: "avgCostPerActiveUser", label: "Avg cost / active user", money: true },
+  { key: "avgCostPerSeat", label: "Avg cost / seat", money: true, ratio: true },
+  { key: "avgCostPerActiveUser", label: "Avg cost / active user", money: true, ratio: true },
   { key: "totalTokens", label: "Total tokens" },
   { key: "ccSessions", label: "Claude Code sessions" },
   { key: "chatMessages", label: "Chat messages" },
@@ -56,7 +56,7 @@ const METRICS: Metric[] = [
 
 export function GroupsView({ from, to, dimensions, timelineDimensions, projectCycles, filterQuery, onError }: Props) {
   const [dimension, setDimension] = useUrlParam("groupBy", ""); // "Stacking by"
-  const [secondaryRaw, setSecondary] = useUrlParam("secondary", ""); // table-only drill-down
+  const [secondaryRaw, setSecondary] = useUrlParam("secondary", ""); // "Breakdown by"
   const [product, setProduct] = useUrlParam("product", "");
   const [qfRaw, setQf] = useUrlParam("qf", ""); // "Quick filter by", encoded "facetId::value"
   const [metricKey, setMetricKey] = useUrlParam("metric", String(METRICS[0]!.key));
@@ -116,9 +116,10 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
     return merged ? JSON.stringify(merged) : undefined;
   }, [filterQuery, quickFilter]);
 
-  // Secondary (table drill-down) options: every dimension the table could group
-  // by, minus whichever is currently "Stacking by" (grouping by the same thing
-  // twice is meaningless). Doesn't affect the chart — see GroupsTableSection.
+  // "Breakdown by" options: every dimension the page could sub-group by, minus
+  // whichever is currently "Stacking by" (grouping by the same thing twice is
+  // meaningless). Drives both the totals chart's stacking and the table's
+  // expandable drill-down rows.
   const secondaryOptions = useMemo(() => {
     const all = [
       ...timelineDimensions.map((d) => ({ id: d.id, label: d.label })),
@@ -231,16 +232,7 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
     () => stackRows(data?.timeseries ?? [], data?.keys ?? [], bucket, scopeCycles),
     [data, bucket, scopeCycles],
   );
-  const stackColor = useMemo(() => {
-    const colorByKey = new Map<string, string>();
-    let i = 0;
-    for (const key of stacked.keys) {
-      if (key === UNASSIGNED_KEY) colorByKey.set(key, NEUTRAL_COLOR);
-      else if (key === OTHER_KEY) colorByKey.set(key, "#3a3f4d");
-      else colorByKey.set(key, COLORS[i++ % COLORS.length]!);
-    }
-    return colorByKey;
-  }, [stacked.keys]);
+  const stackColor = useMemo(() => buildStackColors(stacked.keys), [stacked.keys]);
 
   const isTimelineDimension = dimension.startsWith("@");
 
@@ -383,14 +375,17 @@ export function GroupsView({ from, to, dimensions, timelineDimensions, projectCy
             onSortOrderChange={setSortOrder}
             showDateSort={dimension === CYCLE_DIMENSION_ID}
             orderedGroups={orderedGroups}
+            secondary={secondary}
+            onSecondaryChange={setSecondary}
+            secondaryOptions={secondaryOptions}
+            secondaryLabel={secondaryLabel}
+            secondaryRows={data.secondaryGroups}
+            secondaryDimension={data.secondaryDimension}
           />
           <GroupsTableSection
             columns={columns}
             orderedGroups={orderedGroups}
             data={data}
-            secondary={secondary}
-            onSecondaryChange={setSecondary}
-            secondaryOptions={secondaryOptions}
             secondaryLabel={secondaryLabel}
             sortOrder={sortOrder}
             metricKey={String(metric.key)}
