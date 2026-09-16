@@ -1,18 +1,34 @@
 import { usd } from "../api.js";
 
 /** Recharts <Tooltip content>: the default per-series list, plus a "Total"
- *  row summing every stacked series at the hovered bucket. */
+ *  row summing every stacked series at the hovered bucket.
+ *
+ *  Defaults to dollars and always shows every series (what "Cost over time"
+ *  wants); the totals chart overrides both — its metric may be tokens or a
+ *  plain count, its stack can be 8 keys deep while a given group only touches
+ *  one, and a ratio metric has no meaningful sum. */
 export function StackedCostTooltip({
   active,
   payload,
   label,
+  format = usd,
+  showTotal = true,
+  hideEmpty = false,
 }: {
   active?: boolean;
   payload?: { dataKey?: string; name?: string; value?: number; color?: string }[];
   label?: string;
+  /** How to render each figure (and the total). Defaults to `usd`. */
+  format?: (v: number) => string | number;
+  /** Drop the summing "Total" row — for metrics that don't add up (averages). */
+  showTotal?: boolean;
+  /** Drop series with no value at this point, rather than listing them as zero. */
+  hideEmpty?: boolean;
 }) {
   if (!active || !payload || payload.length === 0) return null;
-  const total = payload.reduce((sum, p) => sum + (Number(p.value) || 0), 0);
+  const rows = hideEmpty ? payload.filter((p) => Number(p.value) !== 0 && p.value != null) : payload;
+  if (rows.length === 0) return null;
+  const total = rows.reduce((sum, p) => sum + (Number(p.value) || 0), 0);
   return (
     <div
       style={{
@@ -27,7 +43,7 @@ export function StackedCostTooltip({
       <div style={{ marginBottom: 4 }}>
         <strong>{label}</strong>
       </div>
-      {payload.map((p, i) => (
+      {rows.map((p, i) => (
         // dataKey is optional in recharts' own payload type — falling back to
         // name, then the index, keeps keys unique even when it's absent
         // rather than risking duplicate `undefined` keys. See #30 item 7.
@@ -36,12 +52,14 @@ export function StackedCostTooltip({
           <span className="muted" style={{ flex: 1 }}>
             {p.name}
           </span>
-          <span>{usd(Number(p.value) || 0)}</span>
+          <span>{format(Number(p.value) || 0)}</span>
         </div>
       ))}
-      <div style={{ marginTop: 4, paddingTop: 4, borderTop: "1px solid #2a2f3a" }}>
-        Total: <strong>{usd(total)}</strong>
-      </div>
+      {showTotal && (
+        <div style={{ marginTop: 4, paddingTop: 4, borderTop: "1px solid #2a2f3a" }}>
+          Total: <strong>{format(total)}</strong>
+        </div>
+      )}
     </div>
   );
 }
